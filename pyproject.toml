@@ -1,0 +1,5 @@
+[project]
+name = "disc-ripper-service"
+version = "1.0.0"
+description = "DVD/Blu-ray ripping and encoding service for the homelab media pipeline"
+requires-python = ">=3.11"

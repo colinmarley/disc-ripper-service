@@ -1,0 +1,24 @@
+services:
+  ripper:
+    build: .
+    container_name: disc-ripper
+    restart: unless-stopped
+    ports:
+      - "8083:8083"
+    devices:
+      - "/dev/sr0:/dev/sr0"
+    volumes:
+      - /data/media/rips:/data/media/rips
+      - /ark/media/jellyfin/ingest:/ark/media/jellyfin/ingest
+      - ripper_db:/data/ripper
+    environment:
+      RIPS_ROOT: /data/media/rips
+      INGEST_ROOT: /ark/media/jellyfin/ingest
+      DB_PATH: /data/ripper/ripper.db
+      # makemkvcon is installed on the HOST, not in the container.
+      # Run the service directly on the host instead of via Docker if makemkvcon
+      # needs direct disc device access that Docker's --device flag doesn't expose.
+      MAKEMKVCON_PATH: makemkvcon
+
+volumes:
+  ripper_db:
