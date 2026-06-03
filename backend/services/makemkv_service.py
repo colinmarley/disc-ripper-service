@@ -7,17 +7,16 @@ Disc info parsing handles the machine-readable (-r) output format:
   SINFO:title_idx,stream_idx,attr_id,int_val,str_val
 
 Key TINFO attribute IDs used here:
-  2  = name/label
-  9  = duration  (H:MM:SS)
-  11 = chapter count
-  25 = output filename MakeMKV would write
-  27 = file size (bytes, as string)
+  8  = chapter count (str_val)
+  9  = duration  (H:MM:SS, str_val)
+  11 = file size (bytes, str_val)
+  27 = output filename MakeMKV would write (str_val)
+  30 = human-readable title description (str_val)
 
 Key SINFO attribute IDs:
-  1  = stream type (Video/Audio/Subtitle)
-  19 = codec short name
-  21 = video width (int_val)
-  22 = video height (int_val)
+  1  = stream type (Video/Audio/Subtitle, str_val)
+  6  = codec name (str_val)
+  19 = resolution as "WxH" string (str_val, video only)
 """
 
 import asyncio
@@ -58,19 +57,19 @@ def _parse_info_output(output: str) -> list[dict]:
                 titles[t_idx] = {"index": t_idx, "name": "", "duration_seconds": 0,
                                  "chapter_count": 0, "file_size_bytes": 0,
                                  "output_filename": "", "streams": []}
-            if attr_id == 2:
-                titles[t_idx]["name"] = str_val
+            if attr_id == 8:
+                titles[t_idx]["chapter_count"] = int(str_val) if str_val.isdigit() else 0
             elif attr_id == 9:
                 titles[t_idx]["duration_seconds"] = _parse_duration(str_val)
             elif attr_id == 11:
-                titles[t_idx]["chapter_count"] = int(int_val) if int_val.isdigit() else 0
-            elif attr_id == 25:
-                titles[t_idx]["output_filename"] = str_val
-            elif attr_id == 27:
                 try:
                     titles[t_idx]["file_size_bytes"] = int(str_val)
                 except ValueError:
                     pass
+            elif attr_id == 27:
+                titles[t_idx]["output_filename"] = str_val
+            elif attr_id == 30:
+                titles[t_idx]["name"] = str_val
 
         elif line.startswith("SINFO:"):
             parts = line[6:].split(",", 4)
@@ -87,18 +86,17 @@ def _parse_info_output(output: str) -> list[dict]:
                 streams[t_idx].append(stream)
             if attr_id == 1:
                 stream["type"] = str_val.lower()
-            elif attr_id == 19:
+            elif attr_id == 6:
                 stream["codec"] = str_val
-            elif attr_id == 21:
-                try:
-                    stream["width"] = int(int_val)
-                except ValueError:
-                    pass
-            elif attr_id == 22:
-                try:
-                    stream["height"] = int(int_val)
-                except ValueError:
-                    pass
+            elif attr_id == 19:
+                # str_val is "WxH" for video streams
+                if "x" in str_val:
+                    parts = str_val.split("x", 1)
+                    try:
+                        stream["width"] = int(parts[0])
+                        stream["height"] = int(parts[1])
+                    except ValueError:
+                        pass
 
     for t_idx, t in titles.items():
         t["streams"] = streams.get(t_idx, [])

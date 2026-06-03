@@ -1,13 +1,21 @@
 import asyncio
+import os
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+from db.database import SessionLocal
+from db.models import RipJob
 from services.job_manager import job_manager
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
+
+
+class RenameFileRequest(BaseModel):
+    name: str
 
 
 class StartJobRequest(BaseModel):
@@ -78,6 +86,59 @@ async def get_job(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return _job_dict(job)
+
+
+@router.get("/{job_id}/files/{file_index}/stream")
+async def stream_file(job_id: str, file_index: int):
+    """Stream a delivered output file for in-browser preview."""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if file_index < 0 or file_index >= len(job.output_paths):
+        raise HTTPException(status_code=404, detail="File index out of range")
+    path = job.output_paths[file_index]
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    return FileResponse(path, media_type="video/x-matroska")
+
+
+@router.patch("/{job_id}/files/{file_index}")
+async def rename_file(job_id: str, file_index: int, body: RenameFileRequest):
+    """Rename a delivered output file on disk and update the job record."""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status != "done":
+        raise HTTPException(status_code=400, detail="Can only rename files from completed jobs")
+    if file_index < 0 or file_index >= len(job.output_paths):
+        raise HTTPException(status_code=404, detail="File index out of range")
+
+    new_name = body.name
+    if not new_name.endswith(".mkv"):
+        raise HTTPException(status_code=400, detail="Filename must end in .mkv")
+    if any(c in new_name for c in ('/', '\\')) or '..' in new_name:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    old_path = Path(job.output_paths[file_index])
+    if not old_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    new_path = old_path.parent / new_name
+    if new_path == old_path:
+        return _job_dict(job)
+    if new_path.exists():
+        raise HTTPException(status_code=409, detail="A file with that name already exists")
+
+    os.rename(old_path, new_path)
+
+    with SessionLocal() as db:
+        j = db.get(RipJob, job_id)
+        paths = list(j.output_paths)
+        paths[file_index] = str(new_path)
+        j.output_paths = paths
+        db.commit()
+        db.refresh(j)
+        return _job_dict(j)
 
 
 @router.get("/{job_id}/log")

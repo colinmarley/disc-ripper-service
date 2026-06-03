@@ -41,12 +41,19 @@ def _episode_filename(ep_code: str, title: str) -> str:
     return f"{ep_code} - {_safe_name(title)}.mkv"
 
 
+def _extract_msg_text(line: str) -> str:
+    """Return the human-readable string from a MSG:/PRGC: line (first quoted field)."""
+    m = re.search(r'"([^"]*)"', line)
+    return m.group(1) if m else ""
+
+
 class JobManager:
     def __init__(self):
         self._new_job_event = asyncio.Event()
         self._active_proc: Optional[asyncio.subprocess.Process] = None
         self._active_job_id: Optional[str] = None
         self._log_subscribers: dict[str, list[asyncio.Queue]] = {}
+        self._last_written_progress: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -169,8 +176,10 @@ class JobManager:
 
         await log(f"[rip] Output dir: {rip_dir}")
 
-        for idx in job.mkv_title_indices:
-            await log(f"[rip] Starting title index {idx}")
+        total = len(job.mkv_title_indices)
+        # Rip phase occupies 0-60% of overall job progress.
+        for title_num, idx in enumerate(job.mkv_title_indices, 1):
+            await log(f"[rip] ── Title {title_num}/{total} (disc index {idx}) ──")
             proc = await asyncio.create_subprocess_exec(
                 settings.makemkvcon_path,
                 "--noscan", "-r",
@@ -181,13 +190,74 @@ class JobManager:
                 stderr=asyncio.subprocess.STDOUT,
             )
             self._active_proc = proc
+
+            last_prgc = ""
+            warn_files: dict[str, int] = {}  # file → count of MSG:4004 hits
+
             async for raw in proc.stdout:
-                await log(raw.decode(errors="replace").rstrip())
+                line = raw.decode(errors="replace").rstrip()
+                if not line:
+                    continue
+
+                # ── Skip pure noise ──────────────────────────────────────
+                if line.startswith((
+                    "DRV:",       # drive enumeration (16 blank entries)
+                    "MSG:1005,",  # "MakeMKV vX.Y.Z started"
+                    "MSG:3007,",  # "Using direct disc access mode"
+                    "MSG:3025,",  # "Title too short, skipped"
+                    "MSG:3028,",  # "Title #N was added"
+                    "PRGT:",      # total-progress label (redundant)
+                )):
+                    continue
+
+                # ── Progress ─────────────────────────────────────────────
+                if line.startswith("PRGV:"):
+                    parts = line[5:].split(",")
+                    if len(parts) == 3:
+                        try:
+                            current, _, max_val = int(parts[0]), parts[1], int(parts[2])
+                            if max_val > 0:
+                                title_frac = current / max_val
+                                overall = ((title_num - 1) + title_frac) / total * 60
+                                self._set_progress(job_id, overall)
+                        except ValueError:
+                            pass
+                    continue
+
+                # ── Current-operation label (log when it changes) ────────
+                if line.startswith("PRGC:"):
+                    msg = _extract_msg_text(line)
+                    if msg and msg != last_prgc:
+                        last_prgc = msg
+                        await log(f"[rip] {msg}")
+                    continue
+
+                # ── Deduplicate MSG:4004 corruption warnings ─────────────
+                if line.startswith("MSG:4004,"):
+                    m = re.search(r"'([^']+)'", line)
+                    fname = m.group(1) if m else "unknown"
+                    warn_files[fname] = warn_files.get(fname, 0) + 1
+                    if warn_files[fname] == 1:
+                        await log(f"[warn] Corrupt sector in {fname} — attempting workaround")
+                    elif warn_files[fname] == 5:
+                        await log(f"[warn] Multiple corrupt sectors in {fname} (suppressing further warnings)")
+                    continue
+
+                # ── Human-readable summary for completion messages ────────
+                if line.startswith(("MSG:5011,", "MSG:5014,", "MSG:5005,", "MSG:5036,")):
+                    text = _extract_msg_text(line)
+                    if text:
+                        await log(f"[rip] {text}")
+                    continue
+
+                # ── Everything else passes through ───────────────────────
+                await log(line)
+
             await proc.wait()
             self._active_proc = None
             if proc.returncode != 0:
                 raise RuntimeError(f"makemkvcon exited {proc.returncode} for title {idx}")
-            await log(f"[rip] Title {idx} done")
+            await log(f"[rip] Title {title_num}/{total} done")
 
     async def _run_encode(self, job_id: str, log):
         job = self._set_status(job_id, "encoding")
@@ -278,6 +348,19 @@ class JobManager:
             db.refresh(job)
             return job
 
+    def _set_progress(self, job_id: str, value: float) -> None:
+        """Write progress to DB only when it moves by ≥2 points (avoids per-PRGV-line writes)."""
+        last = self._last_written_progress.get(job_id, -99)
+        if abs(value - last) < 2.0:
+            return
+        self._last_written_progress[job_id] = value
+        with SessionLocal() as db:
+            job = db.get(RipJob, job_id)
+            if job:
+                job.progress = round(value, 1)
+                job.updated_at = datetime.utcnow()
+                db.commit()
+
     def _update_field(self, job_id: str, **kwargs):
         with SessionLocal() as db:
             job = db.get(RipJob, job_id)
@@ -293,8 +376,8 @@ class JobManager:
             # Keep last 200 lines to avoid unbounded DB growth
             lines = existing.splitlines()
             lines.append(line)
-            if len(lines) > 200:
-                lines = lines[-200:]
+            if len(lines) > 500:
+                lines = lines[-500:]
             job.log = "\n".join(lines)
             job.updated_at = datetime.utcnow()
             db.commit()

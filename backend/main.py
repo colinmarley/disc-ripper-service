@@ -1,9 +1,11 @@
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
 from api.disc_operations import router as disc_router
 from api.job_operations import router as job_router
@@ -35,6 +37,11 @@ app.add_middleware(
 
 app.include_router(disc_router)
 app.include_router(job_router)
+
+
+@app.get("/", response_class=HTMLResponse)
+async def ui():
+    return (Path(__file__).parent / "static" / "index.html").read_text()
 
 
 @app.get("/health")
