@@ -1,7 +1,7 @@
 """
 Job lifecycle manager.
 
-Each job goes through: queued → ripping → encoding → delivering → done | failed | cancelled
+Each job goes through: queued → ripping → delivering → done | failed | cancelled
 
 Jobs run sequentially in a background asyncio task. A single asyncio.Event
 is used to signal when a new job is enqueued so the worker loop wakes up
@@ -22,7 +22,14 @@ from sqlalchemy.orm import Session
 from config.settings import settings
 from db.database import SessionLocal
 from db.models import RipJob
-from services import makemkv_service
+from services import catalog_client, makemkv_service
+from homelab_logging import setup_logging, get_logger
+from homelab_logging.config import LoggingConfig
+
+# Idempotent: this module may be imported directly (e.g. by tests) before
+# main.py has had a chance to call setup_logging() itself.
+setup_logging(LoggingConfig(project="disc-ripper-service", service="backend"))
+logger = get_logger(__name__)
 
 
 def _safe_name(s: str) -> str:
@@ -48,6 +55,27 @@ def _episode_filename(ep_value: str, show_title: str) -> str:
     return f"{_safe_title(show_title)} {ep_value}.mkv"
 
 
+# Extras category slug -> filename suffix token. Must match a token
+# recognized by my-media-manager's services.extras_taxonomy.EXTRA_SUFFIX_TO_FOLDER
+# regex (which matches these tokens at the END of a filename stem) — this
+# suffix is the only channel available to communicate a title's content type
+# across the filesystem handoff, since delivery has no HTTP push to
+# my-media-manager, just a shared bind-mounted ingest folder.
+CONTENT_TYPE_SUFFIX: dict[str, str] = {
+    "behind_the_scenes": "behindthescenes",
+    "deleted_scene": "deletedscene",
+    "interview": "interview",
+    "featurette": "featurette",
+    "trailer": "trailer",
+    "scene": "scene",
+    "sample": "sample",
+    "short": "short",
+    "clip": "clip",
+    "blooper": "blooper",
+    "other": "other",
+}
+
+
 def _build_dest_name(
     media_type: str,
     title: str,
@@ -57,8 +85,26 @@ def _build_dest_name(
     title_idx: str,
     episode_map: dict,
     season: int,
+    content_type: Optional[str] = None,
+    content_type_counts: Optional[dict[str, int]] = None,
 ) -> str:
-    """Return the destination filename for the i-th output file (0-indexed)."""
+    """Return the destination filename for the i-th output file (0-indexed).
+
+    `content_type`, when set to a known extras category (main-feature titles
+    should pass None), routes the file into a taxonomy-suffixed filename
+    instead of the default movie/episode naming — e.g. a trailer becomes
+    "Title (Year)-trailer.mkv" rather than "Title (Year) - Version 2.mkv".
+    `content_type_counts` (mutated in place) disambiguates multiple files of
+    the same content type on one disc.
+    """
+    suffix = CONTENT_TYPE_SUFFIX.get(content_type) if content_type else None
+    if suffix:
+        counts = content_type_counts if content_type_counts is not None else {}
+        counts[content_type] = counts.get(content_type, 0) + 1
+        n = counts[content_type]
+        number_part = f" {n}" if n > 1 else ""
+        return f"{title} ({year}){number_part}-{suffix}.mkv"
+
     if media_type == "movie":
         dest_name = f"{title} ({year}).mkv"
         if total > 1:
@@ -98,8 +144,8 @@ class JobManager:
             season=data.get("season"),
             mkv_title_indices=data.get("mkv_title_indices", [0]),
             episode_map=data.get("episode_map"),
-            encode_quality=data.get("dvd_quality"),
-            encode_encoder=data.get("dvd_encoder"),
+            catalog_disc_id=data.get("catalog_disc_id"),
+            title_content_types=data.get("title_content_types"),
         )
         with SessionLocal() as db:
             db.add(job)
@@ -124,7 +170,7 @@ class JobManager:
         with SessionLocal() as db:
             stale = (
                 db.query(RipJob)
-                .filter(RipJob.status.in_(("ripping", "encoding", "delivering")))
+                .filter(RipJob.status.in_(("ripping", "delivering")))
                 .all()
             )
             for job in stale:
@@ -142,7 +188,7 @@ class JobManager:
                 pass
         with SessionLocal() as db:
             job = db.get(RipJob, job_id)
-            if job and job.status in ("queued", "ripping", "encoding", "delivering"):
+            if job and job.status in ("queued", "ripping", "delivering"):
                 job.status = "cancelled"
                 db.commit()
                 return True
@@ -351,6 +397,8 @@ class JobManager:
         delivered = []
         encoded_paths = job.output_paths or sorted(str(p) for p in Path(job.rip_dir).glob("*.mkv"))
         episode_map = job.episode_map or {}
+        title_content_types = job.title_content_types or {}
+        content_type_counts: dict[str, int] = {}
 
         for i, src in enumerate(encoded_paths):
             src_path = Path(src)
@@ -358,6 +406,8 @@ class JobManager:
             dest_name = _build_dest_name(
                 job.media_type, job.title, job.year,
                 i, len(encoded_paths), title_idx, episode_map, job.season or 1,
+                content_type=title_content_types.get(title_idx),
+                content_type_counts=content_type_counts,
             )
 
             dest_file = dest_dir / dest_name
@@ -371,6 +421,13 @@ class JobManager:
             await log(f"[deliver] Cleaned rip dir: {job.rip_dir}")
         except Exception as e:
             await log(f"[deliver] Warning: could not clean rip dir: {e}")
+
+        if job.catalog_disc_id and delivered:
+            linked = await catalog_client.link_delivered_files(delivered, job.catalog_disc_id)
+            await log(
+                f"[deliver] Linked {len(delivered)} file(s) to catalog disc {job.catalog_disc_id}"
+                if linked else "[deliver] Warning: could not link files to catalog disc (my-media-manager unreachable?)"
+            )
 
         self._update_field(job_id, output_paths=delivered)
         self._set_status(job_id, "done")
@@ -389,6 +446,22 @@ class JobManager:
                 job.error = error
             db.commit()
             db.refresh(job)
+            terminal = status in ("done", "failed", "cancelled")
+            duration_seconds = (
+                (job.updated_at - job.created_at).total_seconds() if terminal and job.created_at else None
+            )
+            if status in ("failed", "cancelled"):
+                logger.warning(
+                    "job_status_changed",
+                    job_id=job_id, status=status, title=job.title, error=error,
+                    duration_seconds=duration_seconds,
+                )
+            else:
+                logger.info(
+                    "job_status_changed",
+                    job_id=job_id, status=status, title=job.title,
+                    duration_seconds=duration_seconds,
+                )
             return job
 
     def _set_progress(self, job_id: str, value: float) -> None:

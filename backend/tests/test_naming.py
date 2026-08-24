@@ -136,3 +136,49 @@ def test_show_partial_map_uses_fallback_for_unmapped():
 def test_show_special_feature_via_map():
     ep_map = {"5": "SpecialFeature001"}
     assert _build_dest_name("show", "The Wire", 2002, 0, 1, "5", ep_map, 1) == "The Wire SpecialFeature001.mkv"
+
+
+# ── _build_dest_name: content_type (extras taxonomy suffix) ────────────────────
+
+def test_content_type_trailer_gets_suffix_filename():
+    result = _build_dest_name(
+        "movie", "Inception", 2010, 1, 2, "1", {}, 1, content_type="trailer",
+    )
+    assert result == "Inception (2010)-trailer.mkv"
+
+
+def test_content_type_overrides_movie_version_naming():
+    # Even though total > 1 (which would normally trigger "- Version N" naming),
+    # a set content_type takes priority so the file auto-classifies on ingest.
+    result = _build_dest_name(
+        "movie", "Dune", 2021, 2, 3, "2", {}, 1, content_type="deleted_scene",
+    )
+    assert result == "Dune (2021)-deletedscene.mkv"
+
+
+def test_content_type_unknown_category_falls_back_to_default_naming():
+    result = _build_dest_name(
+        "movie", "Inception", 2010, 0, 1, "0", {}, 1, content_type="not_a_real_category",
+    )
+    assert result == "Inception (2010).mkv"
+
+
+def test_content_type_numbers_duplicate_categories():
+    counts: dict[str, int] = {}
+    first = _build_dest_name(
+        "movie", "Inception", 2010, 0, 3, "0", {}, 1,
+        content_type="featurette", content_type_counts=counts,
+    )
+    second = _build_dest_name(
+        "movie", "Inception", 2010, 1, 3, "1", {}, 1,
+        content_type="featurette", content_type_counts=counts,
+    )
+    assert first == "Inception (2010)-featurette.mkv"
+    assert second == "Inception (2010) 2-featurette.mkv"
+
+
+def test_content_type_show_still_uses_suffix_not_episode_naming():
+    result = _build_dest_name(
+        "show", "The Wire", 2002, 0, 1, "0", {"0": "S01E01"}, 1, content_type="blooper",
+    )
+    assert result == "The Wire (2002)-blooper.mkv"

@@ -21,6 +21,14 @@ class RipJob(Base):
     season: Mapped[int] = mapped_column(Integer, nullable=True)
     mkv_title_indices: Mapped[list] = mapped_column(JSON, default=list)
     episode_map: Mapped[dict] = mapped_column(JSON, nullable=True)  # {str(title_idx): "S01E01"}
+    # {str(title_idx): "trailer"} — extras taxonomy category slug per title;
+    # absent/None title_idx means "main feature" (see _build_dest_name).
+    title_content_types: Mapped[dict] = mapped_column(JSON, nullable=True)
+
+    # Links this rip to a physical disc record in my-media-manager's Postgres
+    # catalog (the canonical disc entity — see services/catalog_client.py).
+    # Nullable: a rip can happen without a pre-logged or linked disc.
+    catalog_disc_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Job state
     status: Mapped[str] = mapped_column(String, default="queued")
@@ -31,10 +39,6 @@ class RipJob(Base):
     # Intermediate paths
     rip_dir: Mapped[str] = mapped_column(String, nullable=True)
     output_paths: Mapped[list] = mapped_column(JSON, default=list)  # final delivered paths
-
-    # Per-job encode overrides (nullable = use global settings default)
-    encode_quality: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    encode_encoder: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # Log (tail of subprocess output)
     log: Mapped[str] = mapped_column(Text, default="")

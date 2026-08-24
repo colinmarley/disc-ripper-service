@@ -21,19 +21,24 @@ class Settings(BaseSettings):
     # Disc device
     disc_device: str = Field(default="disc:0", validation_alias="DISC_DEVICE")
 
-    # DVD encode settings
-    dvd_encoder: str = "nvenc_h265"
-    dvd_quality: int = 21
-
-    # Blu-ray width threshold — anything wider than this is treated as HD and remuxed
-    bluray_width_threshold: int = 1280
-
     # Log file storage
     logs_root: str = Field(default="/data/ripper/logs", validation_alias="LOGS_ROOT")
 
     # Ollama AI analysis
     ollama_host: str = Field(default="http://192.168.0.227:11434", validation_alias="OLLAMA_HOST")
     ollama_analysis_model: str = Field(default="qwen2.5:32b", validation_alias="OLLAMA_ANALYSIS_MODEL")
+
+    # my-media-manager's Postgres-backed catalog API — canonical source of truth
+    # for physical disc records (see backend/services/catalog_client.py).
+    media_manager_api_url: str = Field(
+        default="http://192.168.0.227:8082", validation_alias="MEDIA_MANAGER_API_URL"
+    )
+
+    # TMDB — used for movie/show search during rip configuration (services/tmdb_service.py).
+    # Kept server-side (unlike the frontend's NEXT_PUBLIC_TMDB_API_KEY, which is
+    # client-exposed) so the key never reaches the browser.
+    tmdb_api_key: str = Field(default="", validation_alias="TMDB_API_KEY")
+    tmdb_base_url: str = Field(default="https://api.themoviedb.org/3", validation_alias="TMDB_BASE_URL")
 
     class Config:
         env_file = ".env"
