@@ -32,8 +32,6 @@ class StartJobRequest(BaseModel):
     season: Optional[int] = None
     mkv_title_indices: list[int] = [0]
     episode_map: Optional[dict[str, str]] = None  # {"0": "S01E01", "1": "S01E02"}
-    dvd_quality: Optional[int] = None   # CRF quality (16-28); None = use global default
-    dvd_encoder: Optional[str] = None   # e.g. "nvenc_h265", "x265", "x264"
     catalog_disc_id: Optional[str] = None  # links this rip to a my-media-manager Disc record
     title_content_types: Optional[dict[str, str]] = None  # {"0": "trailer", "2": "deleted_scene"}
 
@@ -71,8 +69,6 @@ def _job_dict(job) -> dict:
         "error": job.error,
         "rip_dir": job.rip_dir,
         "output_paths": job.output_paths,
-        "encode_quality": job.encode_quality,
-        "encode_encoder": job.encode_encoder,
         "catalog_disc_id": job.catalog_disc_id,
         "title_content_types": job.title_content_types,
     }
@@ -136,8 +132,6 @@ async def retry_job(job_id: str):
         "season": original.season,
         "mkv_title_indices": original.mkv_title_indices,
         "episode_map": original.episode_map,
-        "dvd_quality": original.encode_quality,
-        "dvd_encoder": original.encode_encoder,
         "catalog_disc_id": original.catalog_disc_id,
         "title_content_types": original.title_content_types,
     })

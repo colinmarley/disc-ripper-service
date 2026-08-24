@@ -21,13 +21,6 @@ class Settings(BaseSettings):
     # Disc device
     disc_device: str = Field(default="disc:0", validation_alias="DISC_DEVICE")
 
-    # DVD encode settings
-    dvd_encoder: str = "nvenc_h265"
-    dvd_quality: int = 21
-
-    # Blu-ray width threshold — anything wider than this is treated as HD and remuxed
-    bluray_width_threshold: int = 1280
-
     # Log file storage
     logs_root: str = Field(default="/data/ripper/logs", validation_alias="LOGS_ROOT")
 

@@ -40,10 +40,6 @@ class RipJob(Base):
     rip_dir: Mapped[str] = mapped_column(String, nullable=True)
     output_paths: Mapped[list] = mapped_column(JSON, default=list)  # final delivered paths
 
-    # Per-job encode overrides (nullable = use global settings default)
-    encode_quality: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    encode_encoder: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-
     # Log (tail of subprocess output)
     log: Mapped[str] = mapped_column(Text, default="")
     log_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

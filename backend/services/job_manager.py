@@ -1,7 +1,7 @@
 """
 Job lifecycle manager.
 
-Each job goes through: queued → ripping → encoding → delivering → done | failed | cancelled
+Each job goes through: queued → ripping → delivering → done | failed | cancelled
 
 Jobs run sequentially in a background asyncio task. A single asyncio.Event
 is used to signal when a new job is enqueued so the worker loop wakes up
@@ -144,8 +144,6 @@ class JobManager:
             season=data.get("season"),
             mkv_title_indices=data.get("mkv_title_indices", [0]),
             episode_map=data.get("episode_map"),
-            encode_quality=data.get("dvd_quality"),
-            encode_encoder=data.get("dvd_encoder"),
             catalog_disc_id=data.get("catalog_disc_id"),
             title_content_types=data.get("title_content_types"),
         )
@@ -172,7 +170,7 @@ class JobManager:
         with SessionLocal() as db:
             stale = (
                 db.query(RipJob)
-                .filter(RipJob.status.in_(("ripping", "encoding", "delivering")))
+                .filter(RipJob.status.in_(("ripping", "delivering")))
                 .all()
             )
             for job in stale:
@@ -190,7 +188,7 @@ class JobManager:
                 pass
         with SessionLocal() as db:
             job = db.get(RipJob, job_id)
-            if job and job.status in ("queued", "ripping", "encoding", "delivering"):
+            if job and job.status in ("queued", "ripping", "delivering"):
                 job.status = "cancelled"
                 db.commit()
                 return True

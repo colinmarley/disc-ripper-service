@@ -122,20 +122,20 @@ def test_start_job_duplicate_allowed_after_done(client, make_job):
     assert resp.status_code == 200
 
 
-def test_start_job_with_encode_overrides(client):
+def test_start_job_with_catalog_disc_id_and_content_types(client):
     resp = client.post("/jobs/start", json={
         "disc_type": "dvd",
         "media_type": "movie",
         "title": "Inception",
         "year": 2010,
-        "mkv_title_indices": [0],
-        "dvd_quality": 18,
-        "dvd_encoder": "x265",
+        "mkv_title_indices": [0, 1],
+        "catalog_disc_id": "disc-abc123",
+        "title_content_types": {"1": "trailer"},
     })
     assert resp.status_code == 200
     data = resp.json()
-    assert data["encode_quality"] == 18
-    assert data["encode_encoder"] == "x265"
+    assert data["catalog_disc_id"] == "disc-abc123"
+    assert data["title_content_types"] == {"1": "trailer"}
 
 
 # ── GET /jobs ─────────────────────────────────────────────────────────────────
