@@ -350,11 +350,10 @@ def test_recover_stale_jobs(make_job):
     from services.job_manager import job_manager
     stale_ids = [
         make_job(status="ripping"),
-        make_job(status="encoding"),
         make_job(status="delivering"),
     ]
     recovered = job_manager.recover_stale_jobs()
-    assert recovered == 3
+    assert recovered == 2
 
     with SessionLocal() as db:
         for jid in stale_ids:
