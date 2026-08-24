@@ -23,8 +23,12 @@ from config.settings import settings
 from db.database import SessionLocal
 from db.models import RipJob
 from services import makemkv_service
-from homelab_logging import get_logger
+from homelab_logging import setup_logging, get_logger
+from homelab_logging.config import LoggingConfig
 
+# Idempotent: this module may be imported directly (e.g. by tests) before
+# main.py has had a chance to call setup_logging() itself.
+setup_logging(LoggingConfig(project="disc-ripper-service", service="backend"))
 logger = get_logger(__name__)
 
 
