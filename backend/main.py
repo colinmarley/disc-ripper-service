@@ -12,6 +12,11 @@ from api.job_operations import router as job_router
 from config.settings import settings
 from db.database import Base, engine
 from services.job_manager import job_manager
+from homelab_logging import setup_logging, get_logger, CorrelationMiddleware
+from homelab_logging.config import LoggingConfig
+
+setup_logging(LoggingConfig(project="disc-ripper-service", service="backend"))
+logger = get_logger(__name__)
 
 
 def _migrate_db():
@@ -31,7 +36,7 @@ def _migrate_db():
             if col_name not in existing:
                 conn.execute(text(f"ALTER TABLE rip_jobs ADD COLUMN {col_name} {col_type}"))
                 conn.commit()
-                print(f"[migrate] Added column rip_jobs.{col_name}")
+                logger.info("migrate_add_column", table="rip_jobs", column=col_name)
 
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS job_analysis (
@@ -56,7 +61,7 @@ async def lifespan(app: FastAPI):
     _migrate_db()
     recovered = job_manager.recover_stale_jobs()
     if recovered:
-        print(f"[startup] Marked {recovered} stale job(s) as failed (service restarted mid-job)")
+        logger.warning("stale_jobs_recovered", count=recovered)
     worker = asyncio.create_task(job_manager.run_worker())
     yield
     worker.cancel()
@@ -74,6 +79,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Binds correlation_id/session_id to contextvars for the request lifetime so every
+# log line emitted while handling this request carries the same searchable ID.
+app.add_middleware(CorrelationMiddleware)
 
 app.include_router(disc_router)
 app.include_router(job_router)

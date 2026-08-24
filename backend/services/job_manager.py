@@ -23,6 +23,9 @@ from config.settings import settings
 from db.database import SessionLocal
 from db.models import RipJob
 from services import makemkv_service
+from homelab_logging import get_logger
+
+logger = get_logger(__name__)
 
 
 def _safe_name(s: str) -> str:
@@ -389,6 +392,16 @@ class JobManager:
                 job.error = error
             db.commit()
             db.refresh(job)
+            if status in ("failed", "cancelled"):
+                logger.warning(
+                    "job_status_changed",
+                    job_id=job_id, status=status, title=job.title, error=error,
+                )
+            else:
+                logger.info(
+                    "job_status_changed",
+                    job_id=job_id, status=status, title=job.title,
+                )
             return job
 
     def _set_progress(self, job_id: str, value: float) -> None:

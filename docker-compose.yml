@@ -3,6 +3,10 @@ services:
     build: .
     container_name: disc-ripper
     restart: unless-stopped
+    labels:
+      logging: "promtail"
+      logging_project: "disc-ripper-service"
+      logging_service: "backend"
     ports:
       - "8083:8083"
     devices:
@@ -22,6 +26,10 @@ services:
       MAKEMKVCON_PATH: makemkvcon
       OLLAMA_HOST: http://192.168.0.227:11434
       OLLAMA_ANALYSIS_MODEL: qwen2.5:32b
+      HOST_ID: ai-workstation
+      LOG_PROJECT: disc-ripper-service
+      LOG_SERVICE: backend
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/health')"]
       interval: 30s
