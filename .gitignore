@@ -6,3 +6,9 @@ __pycache__/
 
 mcp_server.log
 test_logs.txt
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+node_modules/

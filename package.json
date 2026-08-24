@@ -1,0 +1,12 @@
+{
+  "name": "disc-ripper-service-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright E2E tests for the disc-ripper-service static UI. Python backend has no other Node dependency — this package.json exists solely for the test runner.",
+  "scripts": {
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
+  }
+}
