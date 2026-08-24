@@ -446,15 +446,21 @@ class JobManager:
                 job.error = error
             db.commit()
             db.refresh(job)
+            terminal = status in ("done", "failed", "cancelled")
+            duration_seconds = (
+                (job.updated_at - job.created_at).total_seconds() if terminal and job.created_at else None
+            )
             if status in ("failed", "cancelled"):
                 logger.warning(
                     "job_status_changed",
                     job_id=job_id, status=status, title=job.title, error=error,
+                    duration_seconds=duration_seconds,
                 )
             else:
                 logger.info(
                     "job_status_changed",
                     job_id=job_id, status=status, title=job.title,
+                    duration_seconds=duration_seconds,
                 )
             return job
 
