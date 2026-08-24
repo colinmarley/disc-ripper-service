@@ -11,8 +11,13 @@ job) and to fetch a disc's details for display.
 import httpx
 
 from config.settings import settings
-from homelab_logging import get_logger
+from homelab_logging import setup_logging, get_logger
+from homelab_logging.config import LoggingConfig
 
+# Idempotent: this module may be imported directly (e.g. by tests, or via
+# job_manager.py's import) before main.py has had a chance to call
+# setup_logging() itself.
+setup_logging(LoggingConfig(project="disc-ripper-service", service="backend"))
 logger = get_logger(__name__)
 
 _TIMEOUT = 10.0

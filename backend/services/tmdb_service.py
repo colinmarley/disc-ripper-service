@@ -11,8 +11,12 @@ the eventual UI component is familiar, but keeps the API key server-side
 import httpx
 
 from config.settings import settings
-from homelab_logging import get_logger
+from homelab_logging import setup_logging, get_logger
+from homelab_logging.config import LoggingConfig
 
+# Idempotent: guards against import order (this module may be imported
+# before main.py has had a chance to call setup_logging() itself).
+setup_logging(LoggingConfig(project="disc-ripper-service", service="backend"))
 logger = get_logger(__name__)
 
 _TIMEOUT = 10.0

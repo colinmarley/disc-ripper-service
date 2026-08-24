@@ -12,8 +12,12 @@ from db.models import JobAnalysis, RipJob
 from services import catalog_client
 from services.analysis_service import analyze_failed_job, get_job_analysis
 from services.job_manager import job_manager
-from homelab_logging import get_logger
+from homelab_logging import setup_logging, get_logger
+from homelab_logging.config import LoggingConfig
 
+# Idempotent: guards against import order (this module may be imported
+# before main.py has had a chance to call setup_logging() itself).
+setup_logging(LoggingConfig(project="disc-ripper-service", service="backend"))
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
