@@ -9,8 +9,12 @@ from pydantic import BaseModel
 
 from db.database import SessionLocal
 from db.models import JobAnalysis, RipJob
+from services import catalog_client
 from services.analysis_service import analyze_failed_job, get_job_analysis
 from services.job_manager import job_manager
+from homelab_logging import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
 
@@ -30,6 +34,7 @@ class StartJobRequest(BaseModel):
     episode_map: Optional[dict[str, str]] = None  # {"0": "S01E01", "1": "S01E02"}
     dvd_quality: Optional[int] = None   # CRF quality (16-28); None = use global default
     dvd_encoder: Optional[str] = None   # e.g. "nvenc_h265", "x265", "x264"
+    catalog_disc_id: Optional[str] = None  # links this rip to a my-media-manager Disc record
 
 
 def _analysis_dict(a: JobAnalysis) -> dict:
@@ -67,6 +72,7 @@ def _job_dict(job) -> dict:
         "output_paths": job.output_paths,
         "encode_quality": job.encode_quality,
         "encode_encoder": job.encode_encoder,
+        "catalog_disc_id": job.catalog_disc_id,
     }
 
 
@@ -97,6 +103,15 @@ async def start_job(req: StartJobRequest):
             detail=f"A job for '{req.title} ({req.year})' is already active (id: {dupe.id})",
         )
 
+    if req.catalog_disc_id:
+        # Best-effort validation only: catalog_client swallows unreachable-service
+        # errors as None, same as a real 404, so we can't distinguish "the disc
+        # doesn't exist" from "my-media-manager is briefly down" here. A rip job
+        # shouldn't be blocked by a catalog API hiccup, so we warn rather than reject.
+        disc = await catalog_client.get_disc(req.catalog_disc_id)
+        if disc is None:
+            logger.warning("catalog_disc_id_unverified", catalog_disc_id=req.catalog_disc_id)
+
     job = job_manager.create_job(req.model_dump())
     return _job_dict(job)
 
@@ -121,6 +136,7 @@ async def retry_job(job_id: str):
         "episode_map": original.episode_map,
         "dvd_quality": original.encode_quality,
         "dvd_encoder": original.encode_encoder,
+        "catalog_disc_id": original.catalog_disc_id,
     })
     return _job_dict(new_job)
 

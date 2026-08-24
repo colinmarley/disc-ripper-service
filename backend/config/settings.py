@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     ollama_host: str = Field(default="http://192.168.0.227:11434", validation_alias="OLLAMA_HOST")
     ollama_analysis_model: str = Field(default="qwen2.5:32b", validation_alias="OLLAMA_ANALYSIS_MODEL")
 
+    # my-media-manager's Postgres-backed catalog API — canonical source of truth
+    # for physical disc records (see backend/services/catalog_client.py).
+    media_manager_api_url: str = Field(
+        default="http://192.168.0.227:8082", validation_alias="MEDIA_MANAGER_API_URL"
+    )
+
     class Config:
         env_file = ".env"
 

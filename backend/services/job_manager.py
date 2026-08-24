@@ -107,6 +107,7 @@ class JobManager:
             episode_map=data.get("episode_map"),
             encode_quality=data.get("dvd_quality"),
             encode_encoder=data.get("dvd_encoder"),
+            catalog_disc_id=data.get("catalog_disc_id"),
         )
         with SessionLocal() as db:
             db.add(job)

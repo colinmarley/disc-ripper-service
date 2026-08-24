@@ -22,6 +22,11 @@ class RipJob(Base):
     mkv_title_indices: Mapped[list] = mapped_column(JSON, default=list)
     episode_map: Mapped[dict] = mapped_column(JSON, nullable=True)  # {str(title_idx): "S01E01"}
 
+    # Links this rip to a physical disc record in my-media-manager's Postgres
+    # catalog (the canonical disc entity — see services/catalog_client.py).
+    # Nullable: a rip can happen without a pre-logged or linked disc.
+    catalog_disc_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     # Job state
     status: Mapped[str] = mapped_column(String, default="queued")
     # queued | ripping | encoding | delivering | done | failed | cancelled

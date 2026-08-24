@@ -26,6 +26,7 @@ def _migrate_db():
         ("encode_quality", "INTEGER"),
         ("encode_encoder", "VARCHAR"),
         ("log_path", "TEXT"),
+        ("catalog_disc_id", "TEXT"),
     ]
     with engine.connect() as conn:
         existing = {
