@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Disc Ripper</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --muted: #8b949e;
+  --primary: #58a6ff;
+  --success: #3fb950;
+  --warn: #d29922;
+  --error: #f85149;
+  --purple: #bc8cff;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px; padding: 24px; max-width: 1100px; margin: 0 auto;
+}
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 24px;
+}
+h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; }
+h2 {
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 16px; margin-bottom: 16px;
+}
+.card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px;
+}
+button {
+  background: var(--primary); color: #000; border: none;
+  border-radius: 6px; padding: 6px 14px; font-size: 13px;
+  font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+button:hover { opacity: 0.85; }
+button:disabled { opacity: 0.35; cursor: default; }
+button.ghost {
+  background: transparent; color: var(--text);
+  border: 1px solid var(--border);
+}
+button.danger { background: var(--error); color: #fff; }
+button.sm { padding: 3px 10px; font-size: 11px; }
+input, select {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); padding: 5px 10px; font-size: 13px;
+}
+input:focus, select:focus { outline: none; border-color: var(--primary); }
+input[type=checkbox] { width: 15px; height: 15px; cursor: pointer; accent-color: var(--primary); }
+table { width: 100%; border-collapse: collapse; }
+th {
+  text-align: left; color: var(--muted); font-weight: 500;
+  font-size: 11px; padding: 6px 8px; border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tr.short-row td { opacity: 0.45; }
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 10px;
+  font-size: 11px; font-weight: 600;
+}
+.s-queued    { background:#30363d; color:var(--muted); }
+.s-ripping   { background:#1f3a5f; color:var(--primary); }
+.s-encoding  { background:#3d2b00; color:var(--warn); }
+.s-delivering{ background:#2d1b5f; color:var(--purple); }
+.s-done      { background:#1a3a1f; color:var(--success); }
+.s-failed    { background:#3a1f1f; color:var(--error); }
+.s-cancelled { background:#30363d; color:var(--muted); }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.form-group { display: flex; flex-direction: column; gap: 4px; }
+.form-group label { font-size: 11px; color: var(--muted); }
+.form-group input, .form-group select { width: 100%; }
+.form-row {
+  display: flex; gap: 12px; align-items: flex-end;
+  margin-top: 12px; flex-wrap: wrap;
+}
+.log-wrap {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  padding: 10px; font-family: 'SF Mono', Consolas, monospace; font-size: 12px;
+  max-height: 280px; overflow-y: auto; color: var(--muted);
+  margin-top: 8px; white-space: pre-wrap; word-break: break-all;
+}
+.tag { font-size: 11px; color: var(--muted); background: #30363d; padding: 1px 6px; border-radius: 4px; }
+.ok  { color: var(--success); font-size: 12px; }
+.err { color: var(--error); font-size: 12px; }
+code { font-family: monospace; color: var(--muted); }
+.muted { color: var(--muted); }
+.spin { display: inline-block; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.job-row { cursor: pointer; }
+.job-row:hover td { background: rgba(255,255,255,0.02); }
+.empty { color: var(--muted); text-align: center; padding: 24px; }
+.ep-input { width: 80px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Disc Ripper</h1>
+  <span id="mkv-status"></span>
+</header>
+
+<!-- DISC -->
+<div class="card">
+  <div class="card-header">
+    <h2>Disc</h2>
+    <button id="scan-btn" onclick="scanDisc()">Scan Disc</button>
+  </div>
+  <div id="titles-wrap">
+    <p class="empty">Insert a disc and click Scan Disc</p>
+  </div>
+</div>
+
+<!-- JOB FORM -->
+<div class="card">
+  <div class="card-header"><h2>New Rip</h2></div>
+  <div class="form-grid">
+    <div class="form-group">
+      <label>Title</label>
+      <input id="f-title" type="text" placeholder="Burn Notice">
+    </div>
+    <div class="form-group">
+      <label>Year</label>
+      <input id="f-year" type="number" placeholder="2007" style="width:100%">
+    </div>
+    <div class="form-group">
+      <label>IMDB ID</label>
+      <input id="f-imdb" type="text" placeholder="tt0810788 (optional)">
+    </div>
+    <div class="form-group">
+      <label>Media Type</label>
+      <select id="f-media" onchange="onMediaChange()">
+        <option value="show">TV Show</option>
+        <option value="movie">Movie</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Disc Type</label>
+      <select id="f-disc">
+        <option value="dvd">DVD</option>
+        <option value="bluray">Blu-ray</option>
+      </select>
+    </div>
+    <div class="form-group" id="season-group">
+      <label>Season</label>
+      <input id="f-season" type="number" value="1" min="1" oninput="autoFill()">
+    </div>
+  </div>
+  <div class="form-row" id="autofill-row">
+    <div class="form-group" style="flex:0 0 auto">
+      <label>Start at episode</label>
+      <input id="f-start-ep" type="number" value="1" min="1" style="width:70px" oninput="autoFill()">
+    </div>
+    <button class="ghost" style="margin-bottom:1px" onclick="autoFill()">Auto-fill episodes</button>
+  </div>
+  <div style="display:flex;justify-content:flex-end;margin-top:14px">
+    <button id="start-btn" onclick="startRip()">Start Rip</button>
+  </div>
+</div>
+
+<!-- JOBS -->
+<div class="card">
+  <div class="card-header">
+    <h2>Jobs</h2>
+    <button class="ghost" onclick="refreshJobs()">Refresh</button>
+  </div>
+  <div id="jobs-wrap">
+    <p class="empty">No jobs yet</p>
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let titles = [];
+let expandedJob = null;
+let logLines = [];
+let sse = null;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+const fmtDur = s => {
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`
+    : `${m}:${String(sec).padStart(2,'0')}`;
+};
+const fmtSize = b => b >= 1e9 ? (b/1e9).toFixed(1)+' GB' : b >= 1e6 ? (b/1e6).toFixed(0)+' MB' : b ? b+' B' : '—';
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+// ── Status ───────────────────────────────────────────────────────────────────
+async function checkStatus() {
+  try {
+    const { makemkvcon_available } = await fetch('/disc/status').then(r => r.json());
+    const el = document.getElementById('mkv-status');
+    el.textContent = makemkvcon_available ? '● makemkvcon ready' : '● makemkvcon not found';
+    el.className = makemkvcon_available ? 'ok' : 'err';
+  } catch {}
+}
+
+// ── Disc scan ────────────────────────────────────────────────────────────────
+async function scanDisc() {
+  const btn = document.getElementById('scan-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin">↻</span> Scanning…';
+  document.getElementById('titles-wrap').innerHTML = '<p class="empty">Scanning — this takes ~45 seconds…</p>';
+
+  try {
+    const d = await fetch('/disc/info').then(r => r.json());
+    if (d.error && !d.titles.length) {
+      document.getElementById('titles-wrap').innerHTML = `<p style="color:var(--error);padding:16px">${esc(d.error)}</p>`;
+      return;
+    }
+    titles = d.titles;
+    renderTitles();
+    autoFill();
+  } catch (e) {
+    document.getElementById('titles-wrap').innerHTML = `<p style="color:var(--error);padding:16px">Scan failed: ${esc(e.message)}</p>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Scan Disc';
+  }
+}
+
+function renderTitles() {
+  if (!titles.length) {
+    document.getElementById('titles-wrap').innerHTML = '<p class="empty">No titles found</p>';
+    return;
+  }
+  const isShow = document.getElementById('f-media').value === 'show';
+
+  const rows = titles.map(t => {
+    const isShort = t.duration_seconds < 120;
+    const defaultChecked = !isShort;
+    const video = t.streams.find(s => s.type === 'video');
+    const audioN = t.streams.filter(s => s.type === 'audio').length;
+    const subN   = t.streams.filter(s => s.type === 'subtitles').length;
+    const res    = video ? (video.width ? `${video.width}×${video.height}` : '—') : '—';
+    const codec  = video ? (video.codec || '—') : '—';
+    const streams = [res, codec !== '—' ? codec : null, audioN ? `${audioN}× audio` : null, subN ? `${subN}× sub` : null]
+      .filter(Boolean).join(' · ');
+
+    const epCell = isShow
+      ? `<input class="ep-input" type="text" id="ep-${t.index}" placeholder="S01E01">`
+      : `<span class="muted">—</span>`;
+
+    return `<tr class="${isShort ? 'short-row' : ''}">
+      <td><input type="checkbox" id="chk-${t.index}" ${defaultChecked ? 'checked' : ''} onchange="autoFill()"></td>
+      <td><code>${t.index}</code></td>
+      <td>${fmtDur(t.duration_seconds)}</td>
+      <td>${fmtSize(t.file_size_bytes)}</td>
+      <td>${t.chapter_count || '—'}</td>
+      <td style="font-size:12px;color:var(--muted)">${streams || '—'}</td>
+      <td>${epCell}</td>
+      <td>${isShort ? '<span class="tag">short</span>' : ''}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('titles-wrap').innerHTML = `
+    <table>
+      <thead><tr>
+        <th></th><th>#</th><th>Duration</th><th>Size</th><th>Chapters</th>
+        <th>Streams</th><th>${isShow ? 'Episode' : ''}</th><th></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ── Auto-fill episode codes ───────────────────────────────────────────────────
+function autoFill() {
+  if (document.getElementById('f-media').value !== 'show') return;
+  const season  = parseInt(document.getElementById('f-season').value)    || 1;
+  const startEp = parseInt(document.getElementById('f-start-ep').value)  || 1;
+  const checked = titles
+    .filter(t => document.getElementById(`chk-${t.index}`)?.checked)
+    .map(t => t.index);
+  checked.forEach((idx, i) => {
+    const el = document.getElementById(`ep-${idx}`);
+    if (el) el.value = `S${String(season).padStart(2,'0')}E${String(startEp + i).padStart(2,'0')}`;
+  });
+}
+
+function onMediaChange() {
+  const isShow = document.getElementById('f-media').value === 'show';
+  document.getElementById('season-group').style.display  = isShow ? '' : 'none';
+  document.getElementById('autofill-row').style.display  = isShow ? '' : 'none';
+  if (titles.length) { renderTitles(); autoFill(); }
+}
+
+// ── Start rip ────────────────────────────────────────────────────────────────
+async function startRip() {
+  const title     = document.getElementById('f-title').value.trim();
+  const year      = parseInt(document.getElementById('f-year').value);
+  const imdb      = document.getElementById('f-imdb').value.trim() || null;
+  const discType  = document.getElementById('f-disc').value;
+  const mediaType = document.getElementById('f-media').value;
+  const season    = mediaType === 'show' ? (parseInt(document.getElementById('f-season').value) || 1) : null;
+
+  if (!title || !year) { alert('Title and year are required'); return; }
+
+  const selected = titles.filter(t => document.getElementById(`chk-${t.index}`)?.checked);
+  if (!selected.length) { alert('Select at least one title to rip'); return; }
+
+  const mkv_title_indices = selected.map(t => t.index);
+  let episode_map = null;
+  if (mediaType === 'show') {
+    episode_map = {};
+    selected.forEach(t => {
+      const v = document.getElementById(`ep-${t.index}`)?.value.trim();
+      if (v) episode_map[String(t.index)] = v;
+    });
+    if (!Object.keys(episode_map).length) episode_map = null;
+  }
+
+  const btn = document.getElementById('start-btn');
+  btn.disabled = true; btn.textContent = 'Starting…';
+  try {
+    const r = await fetch('/jobs/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disc_type: discType, media_type: mediaType, title, year,
+                             imdb_id: imdb, season, mkv_title_indices, episode_map }),
+    });
+    if (!r.ok) { const e = await r.json(); alert('Error: ' + (e.detail || r.statusText)); return; }
+    const job = await r.json();
+    openJobLog(job.id);
+    refreshJobs();
+  } catch (e) {
+    alert('Request failed: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Start Rip';
+  }
+}
+
+// ── Jobs ─────────────────────────────────────────────────────────────────────
+async function refreshJobs() {
+  try {
+    const jobs = await fetch('/jobs').then(r => r.json());
+    renderJobs(jobs);
+  } catch {}
+}
+
+function renderJobs(jobs) {
+  if (!jobs.length) {
+    document.getElementById('jobs-wrap').innerHTML = '<p class="empty">No jobs yet</p>';
+    return;
+  }
+
+  const rows = jobs.map(j => {
+    const eps  = j.episode_map ? Object.values(j.episode_map).join(', ') : '';
+    const desc = j.media_type === 'show' && eps ? `${esc(j.title)} — ${esc(eps)}` : `${esc(j.title)} (${j.year})`;
+    const active = ['queued','ripping','encoding','delivering'].includes(j.status);
+    const isExp  = expandedJob === j.id;
+    const logRow = isExp
+      ? `<tr><td colspan="5"><div class="log-wrap" id="log-${j.id}"></div></td></tr>`
+      : '';
+
+    return `
+      <tr class="job-row" onclick="toggleLog('${j.id}')">
+        <td><span class="badge s-${j.status}">${j.status}</span></td>
+        <td>${desc}</td>
+        <td style="font-size:12px;color:var(--muted)">${new Date(j.created_at).toLocaleString()}</td>
+        <td style="font-size:12px;color:var(--error)">${j.error ? esc(j.error) : ''}</td>
+        <td style="text-align:right">
+          ${active ? `<button class="danger sm" onclick="cancelJob(event,'${j.id}')">Cancel</button>` : ''}
+        </td>
+      </tr>${logRow}`;
+  }).join('');
+
+  document.getElementById('jobs-wrap').innerHTML = `
+    <table>
+      <thead><tr>
+        <th style="width:95px">Status</th>
+        <th>Title</th>
+        <th>Started</th>
+        <th>Error</th>
+        <th></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  // Repopulate log panel with buffered lines after re-render
+  if (expandedJob) {
+    const el = document.getElementById(`log-${expandedJob}`);
+    if (el) {
+      el.textContent = logLines.join('\n');
+      el.scrollTop = el.scrollHeight;
+      if (!sse) startSse(expandedJob);
+    }
+  }
+}
+
+function toggleLog(jobId) {
+  if (expandedJob === jobId) {
+    expandedJob = null;
+    closeSse();
+  } else {
+    closeSse();
+    logLines = [];
+    expandedJob = jobId;
+  }
+  refreshJobs();
+}
+
+function openJobLog(jobId) {
+  closeSse();
+  logLines = [];
+  expandedJob = jobId;
+}
+
+function startSse(jobId) {
+  sse = new EventSource(`/jobs/${jobId}/log`);
+  sse.onmessage = e => {
+    if (e.data === '[EOF]') { closeSse(); return; }
+    logLines.push(e.data);
+    const el = document.getElementById(`log-${jobId}`);
+    if (el) { el.textContent += e.data + '\n'; el.scrollTop = el.scrollHeight; }
+  };
+  sse.onerror = () => closeSse();
+}
+
+function closeSse() {
+  if (sse) { sse.close(); sse = null; }
+}
+
+async function cancelJob(e, jobId) {
+  e.stopPropagation();
+  if (!confirm('Cancel this job?')) return;
+  await fetch(`/jobs/${jobId}/stop`, { method: 'POST' });
+  refreshJobs();
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+checkStatus();
+refreshJobs();
+setInterval(refreshJobs, 4000);
+</script>
+</body>
+</html>

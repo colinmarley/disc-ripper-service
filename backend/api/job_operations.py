@@ -8,7 +8,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from db.database import SessionLocal
-from db.models import RipJob
+from db.models import JobAnalysis, RipJob
+from services.analysis_service import analyze_failed_job, get_job_analysis
 from services.job_manager import job_manager
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
@@ -27,6 +28,23 @@ class StartJobRequest(BaseModel):
     season: Optional[int] = None
     mkv_title_indices: list[int] = [0]
     episode_map: Optional[dict[str, str]] = None  # {"0": "S01E01", "1": "S01E02"}
+    dvd_quality: Optional[int] = None   # CRF quality (16-28); None = use global default
+    dvd_encoder: Optional[str] = None   # e.g. "nvenc_h265", "x265", "x264"
+
+
+def _analysis_dict(a: JobAnalysis) -> dict:
+    return {
+        "id": a.id,
+        "job_id": a.job_id,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+        "error_type": a.error_type,
+        "error_summary": a.error_summary,
+        "suggested_fix": a.suggested_fix,
+        "claude_prompt": a.claude_prompt,
+        "full_analysis": a.full_analysis,
+        "model_used": a.model_used,
+        "log_path": a.log_path,
+    }
 
 
 def _job_dict(job) -> dict:
@@ -47,6 +65,8 @@ def _job_dict(job) -> dict:
         "error": job.error,
         "rip_dir": job.rip_dir,
         "output_paths": job.output_paths,
+        "encode_quality": job.encode_quality,
+        "encode_encoder": job.encode_encoder,
     }
 
 
@@ -60,8 +80,49 @@ async def start_job(req: StartJobRequest):
     if not req.mkv_title_indices:
         raise HTTPException(status_code=400, detail="mkv_title_indices must not be empty")
 
+    with SessionLocal() as db:
+        dupe = (
+            db.query(RipJob)
+            .filter(
+                RipJob.title == req.title,
+                RipJob.year == req.year,
+                RipJob.disc_type == req.disc_type,
+                RipJob.status.in_(("queued", "ripping", "encoding", "delivering")),
+            )
+            .first()
+        )
+    if dupe:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A job for '{req.title} ({req.year})' is already active (id: {dupe.id})",
+        )
+
     job = job_manager.create_job(req.model_dump())
     return _job_dict(job)
+
+
+@router.post("/{job_id}/retry")
+async def retry_job(job_id: str):
+    """Clone a failed or cancelled job's config into a new queued job."""
+    original = job_manager.get_job(job_id)
+    if not original:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if original.status not in ("failed", "cancelled"):
+        raise HTTPException(status_code=400, detail="Can only retry failed or cancelled jobs")
+
+    new_job = job_manager.create_job({
+        "disc_type": original.disc_type,
+        "media_type": original.media_type,
+        "title": original.title,
+        "year": original.year,
+        "imdb_id": original.imdb_id,
+        "season": original.season,
+        "mkv_title_indices": original.mkv_title_indices,
+        "episode_map": original.episode_map,
+        "dvd_quality": original.encode_quality,
+        "dvd_encoder": original.encode_encoder,
+    })
+    return _job_dict(new_job)
 
 
 @router.post("/{job_id}/stop")
@@ -183,3 +244,39 @@ async def stream_log(job_id: str):
             job_manager.unsubscribe_log(job_id, q)
 
     return StreamingResponse(live(), media_type="text/event-stream")
+
+
+@router.post("/{job_id}/analyze")
+async def analyze_job(job_id: str):
+    """
+    Trigger AI failure analysis for a failed job via Ollama.
+    Takes 30-90 seconds depending on model and log size.
+    """
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status != "failed":
+        raise HTTPException(status_code=400, detail="Can only analyze failed jobs")
+
+    try:
+        analysis = await analyze_failed_job(job_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Ollama analysis failed: {e}")
+
+    return _analysis_dict(analysis)
+
+
+@router.get("/{job_id}/analysis")
+async def get_analysis(job_id: str):
+    """Return the saved analysis for a job, 404 if none exists."""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    analysis = get_job_analysis(job_id)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="No analysis found for this job")
+
+    return _analysis_dict(analysis)

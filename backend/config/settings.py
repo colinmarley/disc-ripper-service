@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     # Blu-ray width threshold — anything wider than this is treated as HD and remuxed
     bluray_width_threshold: int = 1280
 
+    # Log file storage
+    logs_root: str = Field(default="/data/ripper/logs", validation_alias="LOGS_ROOT")
+
+    # Ollama AI analysis
+    ollama_host: str = Field(default="http://192.168.0.227:11434", validation_alias="OLLAMA_HOST")
+    ollama_analysis_model: str = Field(default="qwen2.5:32b", validation_alias="OLLAMA_ANALYSIS_MODEL")
+
     class Config:
         env_file = ".env"
 

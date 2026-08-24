@@ -6,6 +6,8 @@ Post-rip processing:
 
 import asyncio
 import json
+import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -62,12 +64,24 @@ async def process_file(
     output_path: str,
     disc_type: str,
     log_callback: Optional[callable] = None,
+    quality: Optional[int] = None,
+    encoder: Optional[str] = None,
 ) -> None:
     """
     Encode or remux input_path → output_path.
     disc_type: "dvd" | "bluray"
+    quality/encoder override per-job settings (fall back to global settings).
     Raises RuntimeError on failure.
     """
+    effective_encoder = encoder if encoder is not None else settings.dvd_encoder
+
+    # "none" skips all processing — raw MKV is copied straight to output_path
+    if effective_encoder == "none":
+        if log_callback:
+            await log_callback(f"[encode] No-encode mode — copying {Path(input_path).name} as-is")
+        await asyncio.to_thread(shutil.copy2, input_path, output_path)
+        return
+
     # Auto-detect: if video is wider than threshold, treat as Blu-ray regardless of declared type
     width = _probe_video_width(input_path)
     effective_type = disc_type
@@ -79,7 +93,7 @@ async def process_file(
     if effective_type == "bluray":
         await _remux_bluray(input_path, output_path, log_callback)
     else:
-        await _encode_dvd(input_path, output_path, log_callback)
+        await _encode_dvd(input_path, output_path, log_callback, quality=quality, encoder=effective_encoder)
 
 
 async def _remux_bluray(
@@ -118,23 +132,50 @@ async def _encode_dvd(
     input_path: str,
     output_path: str,
     log_callback: Optional[callable],
+    quality: Optional[int] = None,
+    encoder: Optional[str] = None,
 ) -> None:
-    """HandBrakeCLI: NVENC H.265, audio passthrough, all subtitles."""
+    """HandBrakeCLI: H.265 encode, audio passthrough, all subtitles.
+
+    If an NVENC encoder is requested but fails (e.g. CUDA/libcuda.so unavailable),
+    automatically falls back to the x265 CPU encoder and retries.
+    """
+    effective_quality = quality if quality is not None else settings.dvd_quality
+    effective_encoder = encoder if encoder is not None else settings.dvd_encoder
+
     if log_callback:
         await log_callback(f"[encode] Input: {input_path}")
-        await log_callback(f"[encode] Encoder: {settings.dvd_encoder}, quality: {settings.dvd_quality}")
+        await log_callback(f"[encode] Encoder: {effective_encoder}, quality: {effective_quality}")
 
-    cmd = [
-        settings.handbrake_path,
-        "-i", input_path,
-        "-o", output_path,
-        "--encoder", settings.dvd_encoder,
-        "--quality", str(settings.dvd_quality),
-        "--all-audio",
-        "--aencoder", "copy",
-        "--all-subtitles",
-    ]
-    await _run_proc(cmd, log_callback, prefix="[encode]")
+    def _build_cmd(enc: str) -> list[str]:
+        return [
+            settings.handbrake_path,
+            "-i", input_path,
+            "-o", output_path,
+            "--encoder", enc,
+            "--quality", str(effective_quality),
+            "--all-audio",
+            "--aencoder", "copy",
+            "--all-subtitles",
+        ]
+
+    try:
+        await _run_proc(_build_cmd(effective_encoder), log_callback, prefix="[encode]")
+    except RuntimeError as exc:
+        if "nvenc" not in effective_encoder.lower():
+            raise
+        fallback_encoder = "x265"
+        if log_callback:
+            await log_callback(
+                f"[encode] WARN: {effective_encoder} failed ({exc}) — GPU encoder unavailable, "
+                f"retrying with {fallback_encoder} (CPU)"
+            )
+        # Remove any partial output before retrying
+        try:
+            os.remove(output_path)
+        except FileNotFoundError:
+            pass
+        await _run_proc(_build_cmd(fallback_encoder), log_callback, prefix="[encode]")
 
 
 async def _run_proc(

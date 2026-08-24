@@ -14,9 +14,49 @@ from db.database import Base, engine
 from services.job_manager import job_manager
 
 
+def _migrate_db():
+    """Add new columns to existing DB tables without alembic."""
+    from sqlalchemy import text
+    new_columns = [
+        ("encode_quality", "INTEGER"),
+        ("encode_encoder", "VARCHAR"),
+        ("log_path", "TEXT"),
+    ]
+    with engine.connect() as conn:
+        existing = {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info(rip_jobs)")).fetchall()
+        }
+        for col_name, col_type in new_columns:
+            if col_name not in existing:
+                conn.execute(text(f"ALTER TABLE rip_jobs ADD COLUMN {col_name} {col_type}"))
+                conn.commit()
+                print(f"[migrate] Added column rip_jobs.{col_name}")
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS job_analysis (
+                id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL REFERENCES rip_jobs(id),
+                created_at DATETIME,
+                error_type TEXT,
+                error_summary TEXT,
+                suggested_fix TEXT,
+                claude_prompt TEXT,
+                full_analysis TEXT,
+                model_used TEXT,
+                log_path TEXT
+            )
+        """))
+        conn.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    _migrate_db()
+    recovered = job_manager.recover_stale_jobs()
+    if recovered:
+        print(f"[startup] Marked {recovered} stale job(s) as failed (service restarted mid-job)")
     worker = asyncio.create_task(job_manager.run_worker())
     yield
     worker.cancel()

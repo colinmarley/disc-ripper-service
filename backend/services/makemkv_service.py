@@ -130,12 +130,24 @@ async def scan_disc() -> dict[str, Any]:
         return {"error": "makemkvcon not found", "titles": []}
 
     output = stdout.decode(errors="replace")
+    err_output = stderr.decode(errors="replace")
+
     if proc.returncode != 0 and not output:
-        return {"error": stderr.decode(errors="replace") or "Disc scan failed", "titles": []}
+        return {"error": err_output.strip() or "Disc scan failed", "titles": []}
 
     titles = _parse_info_output(output)
     if not titles:
-        return {"error": "No titles found — is a disc inserted?", "titles": []}
+        # Surface the raw makemkvcon output to help diagnose the cause
+        # (expired beta key, no disc, device error, etc.)
+        detail_lines = [
+            line for line in (output + err_output).splitlines()
+            if line.strip() and not line.startswith(("DRV:", "PRGT:", "PRGC:", "PRGV:"))
+        ]
+        detail = " | ".join(detail_lines[-5:]) if detail_lines else ""
+        msg = "No titles found — is a disc inserted?"
+        if detail:
+            msg += f"  (makemkvcon: {detail})"
+        return {"error": msg, "titles": []}
 
     return {"titles": titles, "error": None}
 

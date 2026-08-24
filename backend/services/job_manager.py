@@ -22,11 +22,16 @@ from sqlalchemy.orm import Session
 from config.settings import settings
 from db.database import SessionLocal
 from db.models import RipJob
-from services import makemkv_service, encode_service
+from services import makemkv_service
 
 
 def _safe_name(s: str) -> str:
     return re.sub(r'[^\w\s\-\.]', '', s).strip().replace(' ', '_')
+
+
+def _safe_title(s: str) -> str:
+    """Sanitize a title for use in a filename, keeping spaces (for readability)."""
+    return re.sub(r'[/\\:*?"<>|\x00-\x1f]', '', s).strip()
 
 
 def _ingest_folder_name(job: RipJob) -> str:
@@ -36,9 +41,32 @@ def _ingest_folder_name(job: RipJob) -> str:
     return base
 
 
-def _episode_filename(ep_code: str, title: str) -> str:
-    """e.g. 'S01E03' + series title → 'S01E03 - Show Title.mkv'"""
-    return f"{ep_code} - {_safe_name(title)}.mkv"
+def _episode_filename(ep_value: str, show_title: str) -> str:
+    """e.g. 'S01E03 - Pilot' + 'Burn Notice' → 'Burn Notice S01E03 - Pilot.mkv'
+    ep_value may be just a code ('S01E03') or code + name ('S01E03 - Pilot').
+    """
+    return f"{_safe_title(show_title)} {ep_value}.mkv"
+
+
+def _build_dest_name(
+    media_type: str,
+    title: str,
+    year: int,
+    i: int,
+    total: int,
+    title_idx: str,
+    episode_map: dict,
+    season: int,
+) -> str:
+    """Return the destination filename for the i-th output file (0-indexed)."""
+    if media_type == "movie":
+        dest_name = f"{title} ({year}).mkv"
+        if total > 1:
+            dest_name = f"{title} ({year}) - Version {i + 1}.mkv"
+    else:
+        ep_code = episode_map.get(title_idx, f"S{season or 1:02d}E{i + 1:02d}")
+        dest_name = _episode_filename(ep_code, title)
+    return dest_name
 
 
 def _extract_msg_text(line: str) -> str:
@@ -70,6 +98,8 @@ class JobManager:
             season=data.get("season"),
             mkv_title_indices=data.get("mkv_title_indices", [0]),
             episode_map=data.get("episode_map"),
+            encode_quality=data.get("dvd_quality"),
+            encode_encoder=data.get("dvd_encoder"),
         )
         with SessionLocal() as db:
             db.add(job)
@@ -88,6 +118,21 @@ class JobManager:
             if status:
                 q = q.filter(RipJob.status == status)
             return q.all()
+
+    def recover_stale_jobs(self) -> int:
+        """Fail any jobs left in active states from a previous run."""
+        with SessionLocal() as db:
+            stale = (
+                db.query(RipJob)
+                .filter(RipJob.status.in_(("ripping", "encoding", "delivering")))
+                .all()
+            )
+            for job in stale:
+                job.status = "failed"
+                job.error = "Service restarted while job was in progress"
+                job.updated_at = datetime.utcnow()
+            db.commit()
+            return len(stale)
 
     def cancel_job(self, job_id: str) -> bool:
         if self._active_job_id == job_id and self._active_proc:
@@ -143,14 +188,25 @@ class JobManager:
     async def _process_job(self, job_id: str):
         self._active_job_id = job_id
 
+        # Open full log file for this job
+        log_dir = Path(settings.logs_root)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file_path = str(log_dir / f"{job_id}.log")
+        log_fh = open(log_file_path, "a", encoding="utf-8")
+        self._update_field(job_id, log_path=log_file_path)
+
         async def log(line: str):
             self._append_log(job_id, line)
+            try:
+                log_fh.write(line + "\n")
+                log_fh.flush()
+            except Exception:
+                pass
             for q in list(self._log_subscribers.get(job_id, [])):
                 await q.put(line)
 
         try:
             await self._run_rip(job_id, log)
-            await self._run_encode(job_id, log)
             await self._run_deliver(job_id, log)
         except asyncio.CancelledError:
             self._set_status(job_id, "cancelled")
@@ -159,6 +215,10 @@ class JobManager:
             await log(f"[ERROR] {exc}")
         finally:
             self._active_job_id = None
+            try:
+                log_fh.close()
+            except Exception:
+                pass
             # Signal EOF to all log subscribers
             for q in list(self._log_subscribers.get(job_id, [])):
                 await q.put(None)
@@ -180,6 +240,11 @@ class JobManager:
         # Rip phase occupies 0-60% of overall job progress.
         for title_num, idx in enumerate(job.mkv_title_indices, 1):
             await log(f"[rip] ── Title {title_num}/{total} (disc index {idx}) ──")
+            # Snapshot before ripping so we can identify the new file afterwards
+            # and rename it to a canonical sequential name. This guarantees that
+            # sorted(glob("*.mkv")) in the encode phase matches the rip order,
+            # which is required for episode_map lookups to align correctly.
+            before_rip = set(Path(rip_dir).glob("*.mkv"))
             proc = await asyncio.create_subprocess_exec(
                 settings.makemkvcon_path,
                 "--noscan", "-r",
@@ -257,38 +322,20 @@ class JobManager:
             self._active_proc = None
             if proc.returncode != 0:
                 raise RuntimeError(f"makemkvcon exited {proc.returncode} for title {idx}")
+
+            # Rename the newly produced file to rip_NNNN.mkv so encode/deliver
+            # can rely on alphabetical sort order matching the rip order.
+            after_rip = set(Path(rip_dir).glob("*.mkv"))
+            new_files = after_rip - before_rip
+            if len(new_files) == 1:
+                produced = new_files.pop()
+                canonical = Path(rip_dir) / f"rip_{title_num:04d}.mkv"
+                produced.rename(canonical)
+                await log(f"[rip] {produced.name} → {canonical.name}")
+            else:
+                await log(f"[rip] Warning: expected 1 new file for title {idx}, found {len(new_files)} — episode order may be incorrect")
+
             await log(f"[rip] Title {title_num}/{total} done")
-
-    async def _run_encode(self, job_id: str, log):
-        job = self._set_status(job_id, "encoding")
-        rip_dir = job.rip_dir
-        encoded_paths = []
-
-        mkv_files = sorted(Path(rip_dir).glob("*.mkv"))
-        if not mkv_files:
-            raise RuntimeError(f"No .mkv files found in {rip_dir} after ripping")
-
-        await log(f"[encode] Found {len(mkv_files)} MKV file(s)")
-
-        for mkv in mkv_files:
-            out_name = mkv.stem + "_processed.mkv"
-            out_path = str(mkv.parent / out_name)
-
-            proc_handle: list = []
-
-            async def log_and_track(line: str, _out=out_path):
-                await log(line)
-
-            await encode_service.process_file(
-                input_path=str(mkv),
-                output_path=out_path,
-                disc_type=job.disc_type,
-                log_callback=log,
-            )
-            encoded_paths.append(out_path)
-            await log(f"[encode] Done: {out_path}")
-
-        self._update_field(job_id, output_paths=encoded_paths)
 
     async def _run_deliver(self, job_id: str, log):
         job = self._set_status(job_id, "delivering")
@@ -302,20 +349,16 @@ class JobManager:
         await log(f"[deliver] Destination: {dest_dir}")
 
         delivered = []
-        encoded_paths = job.output_paths or []
+        encoded_paths = job.output_paths or sorted(str(p) for p in Path(job.rip_dir).glob("*.mkv"))
         episode_map = job.episode_map or {}
 
         for i, src in enumerate(encoded_paths):
             src_path = Path(src)
-            if job.media_type == "movie":
-                dest_name = f"{job.title} ({job.year}).mkv"
-                if len(encoded_paths) > 1:
-                    dest_name = f"{job.title} ({job.year}) - Version {i + 1}.mkv"
-            else:
-                # Map by original title index if we have an episode map
-                title_idx = str(job.mkv_title_indices[i]) if i < len(job.mkv_title_indices) else str(i)
-                ep_code = episode_map.get(title_idx, f"S{job.season or 1:02d}E{i + 1:02d}")
-                dest_name = _episode_filename(ep_code, job.title)
+            title_idx = str(job.mkv_title_indices[i]) if i < len(job.mkv_title_indices) else str(i)
+            dest_name = _build_dest_name(
+                job.media_type, job.title, job.year,
+                i, len(encoded_paths), title_idx, episode_map, job.season or 1,
+            )
 
             dest_file = dest_dir / dest_name
             await log(f"[deliver] Moving {src_path.name} → {dest_file.name}")

@@ -7,18 +7,27 @@ services:
       - "8083:8083"
     devices:
       - "/dev/sr0:/dev/sr0"
+      - "/dev/sg3:/dev/sg3"
     volumes:
       - /data/media/rips:/data/media/rips
       - /ark/media/jellyfin/ingest:/ark/media/jellyfin/ingest
       - ripper_db:/data/ripper
+      # MakeMKV license — stored in host's ~/.MakeMKV/settings.conf
+      - ${HOME}/.MakeMKV:/root/.MakeMKV:ro
     environment:
       RIPS_ROOT: /data/media/rips
       INGEST_ROOT: /ark/media/jellyfin/ingest
       DB_PATH: /data/ripper/ripper.db
-      # makemkvcon is installed on the HOST, not in the container.
-      # Run the service directly on the host instead of via Docker if makemkvcon
-      # needs direct disc device access that Docker's --device flag doesn't expose.
+      LOGS_ROOT: /data/ripper/logs
       MAKEMKVCON_PATH: makemkvcon
+      OLLAMA_HOST: http://192.168.0.227:11434
+      OLLAMA_ANALYSIS_MODEL: qwen2.5:32b
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   ripper_db:
