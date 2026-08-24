@@ -41,6 +41,12 @@ class Settings(BaseSettings):
         default="http://192.168.0.227:8082", validation_alias="MEDIA_MANAGER_API_URL"
     )
 
+    # TMDB — used for movie/show search during rip configuration (services/tmdb_service.py).
+    # Kept server-side (unlike the frontend's NEXT_PUBLIC_TMDB_API_KEY, which is
+    # client-exposed) so the key never reaches the browser.
+    tmdb_api_key: str = Field(default="", validation_alias="TMDB_API_KEY")
+    tmdb_base_url: str = Field(default="https://api.themoviedb.org/3", validation_alias="TMDB_BASE_URL")
+
     class Config:
         env_file = ".env"
 

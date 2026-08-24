@@ -35,6 +35,7 @@ class StartJobRequest(BaseModel):
     dvd_quality: Optional[int] = None   # CRF quality (16-28); None = use global default
     dvd_encoder: Optional[str] = None   # e.g. "nvenc_h265", "x265", "x264"
     catalog_disc_id: Optional[str] = None  # links this rip to a my-media-manager Disc record
+    title_content_types: Optional[dict[str, str]] = None  # {"0": "trailer", "2": "deleted_scene"}
 
 
 def _analysis_dict(a: JobAnalysis) -> dict:
@@ -73,6 +74,7 @@ def _job_dict(job) -> dict:
         "encode_quality": job.encode_quality,
         "encode_encoder": job.encode_encoder,
         "catalog_disc_id": job.catalog_disc_id,
+        "title_content_types": job.title_content_types,
     }
 
 
@@ -137,6 +139,7 @@ async def retry_job(job_id: str):
         "dvd_quality": original.encode_quality,
         "dvd_encoder": original.encode_encoder,
         "catalog_disc_id": original.catalog_disc_id,
+        "title_content_types": original.title_content_types,
     })
     return _job_dict(new_job)
 

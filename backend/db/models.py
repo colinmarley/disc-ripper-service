@@ -21,6 +21,9 @@ class RipJob(Base):
     season: Mapped[int] = mapped_column(Integer, nullable=True)
     mkv_title_indices: Mapped[list] = mapped_column(JSON, default=list)
     episode_map: Mapped[dict] = mapped_column(JSON, nullable=True)  # {str(title_idx): "S01E01"}
+    # {str(title_idx): "trailer"} — extras taxonomy category slug per title;
+    # absent/None title_idx means "main feature" (see _build_dest_name).
+    title_content_types: Mapped[dict] = mapped_column(JSON, nullable=True)
 
     # Links this rip to a physical disc record in my-media-manager's Postgres
     # catalog (the canonical disc entity — see services/catalog_client.py).

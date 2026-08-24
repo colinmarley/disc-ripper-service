@@ -55,6 +55,27 @@ def _episode_filename(ep_value: str, show_title: str) -> str:
     return f"{_safe_title(show_title)} {ep_value}.mkv"
 
 
+# Extras category slug -> filename suffix token. Must match a token
+# recognized by my-media-manager's services.extras_taxonomy.EXTRA_SUFFIX_TO_FOLDER
+# regex (which matches these tokens at the END of a filename stem) — this
+# suffix is the only channel available to communicate a title's content type
+# across the filesystem handoff, since delivery has no HTTP push to
+# my-media-manager, just a shared bind-mounted ingest folder.
+CONTENT_TYPE_SUFFIX: dict[str, str] = {
+    "behind_the_scenes": "behindthescenes",
+    "deleted_scene": "deletedscene",
+    "interview": "interview",
+    "featurette": "featurette",
+    "trailer": "trailer",
+    "scene": "scene",
+    "sample": "sample",
+    "short": "short",
+    "clip": "clip",
+    "blooper": "blooper",
+    "other": "other",
+}
+
+
 def _build_dest_name(
     media_type: str,
     title: str,
@@ -64,8 +85,26 @@ def _build_dest_name(
     title_idx: str,
     episode_map: dict,
     season: int,
+    content_type: Optional[str] = None,
+    content_type_counts: Optional[dict[str, int]] = None,
 ) -> str:
-    """Return the destination filename for the i-th output file (0-indexed)."""
+    """Return the destination filename for the i-th output file (0-indexed).
+
+    `content_type`, when set to a known extras category (main-feature titles
+    should pass None), routes the file into a taxonomy-suffixed filename
+    instead of the default movie/episode naming — e.g. a trailer becomes
+    "Title (Year)-trailer.mkv" rather than "Title (Year) - Version 2.mkv".
+    `content_type_counts` (mutated in place) disambiguates multiple files of
+    the same content type on one disc.
+    """
+    suffix = CONTENT_TYPE_SUFFIX.get(content_type) if content_type else None
+    if suffix:
+        counts = content_type_counts if content_type_counts is not None else {}
+        counts[content_type] = counts.get(content_type, 0) + 1
+        n = counts[content_type]
+        number_part = f" {n}" if n > 1 else ""
+        return f"{title} ({year}){number_part}-{suffix}.mkv"
+
     if media_type == "movie":
         dest_name = f"{title} ({year}).mkv"
         if total > 1:
@@ -108,6 +147,7 @@ class JobManager:
             encode_quality=data.get("dvd_quality"),
             encode_encoder=data.get("dvd_encoder"),
             catalog_disc_id=data.get("catalog_disc_id"),
+            title_content_types=data.get("title_content_types"),
         )
         with SessionLocal() as db:
             db.add(job)
@@ -359,6 +399,8 @@ class JobManager:
         delivered = []
         encoded_paths = job.output_paths or sorted(str(p) for p in Path(job.rip_dir).glob("*.mkv"))
         episode_map = job.episode_map or {}
+        title_content_types = job.title_content_types or {}
+        content_type_counts: dict[str, int] = {}
 
         for i, src in enumerate(encoded_paths):
             src_path = Path(src)
@@ -366,6 +408,8 @@ class JobManager:
             dest_name = _build_dest_name(
                 job.media_type, job.title, job.year,
                 i, len(encoded_paths), title_idx, episode_map, job.season or 1,
+                content_type=title_content_types.get(title_idx),
+                content_type_counts=content_type_counts,
             )
 
             dest_file = dest_dir / dest_name

@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse
 
 from api.disc_operations import router as disc_router
 from api.job_operations import router as job_router
+from api.tmdb_operations import router as tmdb_router
 from config.settings import settings
 from db.database import Base, engine
 from services.job_manager import job_manager
@@ -27,6 +28,7 @@ def _migrate_db():
         ("encode_encoder", "VARCHAR"),
         ("log_path", "TEXT"),
         ("catalog_disc_id", "TEXT"),
+        ("title_content_types", "TEXT"),
     ]
     with engine.connect() as conn:
         existing = {
@@ -87,6 +89,7 @@ app.add_middleware(CorrelationMiddleware)
 
 app.include_router(disc_router)
 app.include_router(job_router)
+app.include_router(tmdb_router)
 
 
 @app.get("/", response_class=HTMLResponse)
