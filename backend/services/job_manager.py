@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from config.settings import settings
 from db.database import SessionLocal
 from db.models import RipJob
-from services import makemkv_service
+from services import catalog_client, makemkv_service
 from homelab_logging import setup_logging, get_logger
 from homelab_logging.config import LoggingConfig
 
@@ -421,6 +421,13 @@ class JobManager:
             await log(f"[deliver] Cleaned rip dir: {job.rip_dir}")
         except Exception as e:
             await log(f"[deliver] Warning: could not clean rip dir: {e}")
+
+        if job.catalog_disc_id and delivered:
+            linked = await catalog_client.link_delivered_files(delivered, job.catalog_disc_id)
+            await log(
+                f"[deliver] Linked {len(delivered)} file(s) to catalog disc {job.catalog_disc_id}"
+                if linked else "[deliver] Warning: could not link files to catalog disc (my-media-manager unreachable?)"
+            )
 
         self._update_field(job_id, output_paths=delivered)
         self._set_status(job_id, "done")

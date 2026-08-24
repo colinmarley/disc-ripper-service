@@ -66,3 +66,25 @@ async def create_disc(body: dict) -> dict:
         response = await client.post(url, json=body)
         response.raise_for_status()
         return response.json()
+
+
+async def link_delivered_files(file_paths: list[str], disc_id: str) -> bool:
+    """
+    Tell my-media-manager which disc a set of just-delivered files came from.
+
+    This is the only point where that link is ever communicated —
+    _run_deliver() moves files into the shared /ark ingest bind mount with
+    no other push to my-media-manager, so if this call doesn't happen (or
+    fails), the files land and get ingested normally but with no disc_id set.
+    Best-effort: logs and returns False on failure rather than raising, since
+    a catalog-link failure shouldn't be treated as a failed rip job.
+    """
+    url = f"{settings.media_manager_api_url}/api/catalog/link-source"
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            response = await client.post(url, json={"filePaths": file_paths, "discId": disc_id})
+            response.raise_for_status()
+            return True
+    except httpx.HTTPError as exc:
+        logger.warning("catalog_link_source_failed", disc_id=disc_id, error=str(exc))
+        return False
