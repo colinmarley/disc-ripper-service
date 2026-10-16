@@ -72,24 +72,25 @@ async def analyze_failed_job(job_id: str) -> JobAnalysis:
         log_content=log_content,
     )
 
-    ollama_url = f"{settings.ollama_host.rstrip('/')}/api/chat"
+    localai_url = f"{settings.localai_url.rstrip('/')}/v1/chat/completions"
     payload = {
-        "model": settings.ollama_analysis_model,
+        "model": settings.localai_analysis_model,
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
         "stream": False,
-        "format": "json",
+        "response_format": {"type": "json_object"},
     }
+    headers = {"Authorization": f"Bearer {settings.localai_api_key}"}
 
     async with httpx.AsyncClient(timeout=120.0) as client:
-        response = await client.post(ollama_url, json=payload)
+        response = await client.post(localai_url, json=payload, headers=headers)
         response.raise_for_status()
 
     raw_response = response.json()
-    # Ollama /api/chat non-streaming: {"message": {"role": "assistant", "content": "..."}}
-    content = raw_response.get("message", {}).get("content", "")
+    # OpenAI-compatible /v1/chat/completions: {"choices": [{"message": {"role": "assistant", "content": "..."}}]}
+    content = raw_response.get("choices", [{}])[0].get("message", {}).get("content", "")
 
     parsed: dict = {}
     try:
@@ -111,7 +112,7 @@ async def analyze_failed_job(job_id: str) -> JobAnalysis:
         suggested_fix=parsed.get("suggested_fix", ""),
         claude_prompt=parsed.get("claude_prompt", ""),
         full_analysis=content,
-        model_used=settings.ollama_analysis_model,
+        model_used=settings.localai_analysis_model,
         log_path=job_log_path,
     )
 

@@ -24,8 +24,9 @@ services:
       DB_PATH: /data/ripper/ripper.db
       LOGS_ROOT: /data/ripper/logs
       MAKEMKVCON_PATH: makemkvcon
-      OLLAMA_HOST: http://192.168.0.227:11434
-      OLLAMA_ANALYSIS_MODEL: qwen2.5:32b
+      LOCALAI_URL: http://192.168.0.227:8080
+      LOCALAI_API_KEY: "${LOCALAI_API_KEY}"
+      LOCALAI_ANALYSIS_MODEL: qwen2.5-14b
       HOST_ID: ai-workstation
       LOG_PROJECT: disc-ripper-service
       LOG_SERVICE: backend

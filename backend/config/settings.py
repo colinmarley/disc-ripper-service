@@ -24,9 +24,10 @@ class Settings(BaseSettings):
     # Log file storage
     logs_root: str = Field(default="/data/ripper/logs", validation_alias="LOGS_ROOT")
 
-    # Ollama AI analysis
-    ollama_host: str = Field(default="http://192.168.0.227:11434", validation_alias="OLLAMA_HOST")
-    ollama_analysis_model: str = Field(default="qwen2.5:32b", validation_alias="OLLAMA_ANALYSIS_MODEL")
+    # LocalAI AI analysis
+    localai_url: str = Field(default="http://192.168.0.227:8080", validation_alias="LOCALAI_URL")
+    localai_api_key: str = Field(default="", validation_alias="LOCALAI_API_KEY")
+    localai_analysis_model: str = Field(default="qwen2.5-14b", validation_alias="LOCALAI_ANALYSIS_MODEL")
 
     # my-media-manager's Postgres-backed catalog API — canonical source of truth
     # for physical disc records (see backend/services/catalog_client.py).
