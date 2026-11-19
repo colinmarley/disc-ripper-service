@@ -38,7 +38,7 @@ otherwise get `- Version N` naming.
 ## Why the suffix, not something richer
 
 Delivery is filesystem-only — `_run_deliver()` moves files into the shared
-`/ark/media/jellyfin/ingest` bind mount with no other push to
+`INGEST_ROOT` bind mount with no other push to
 my-media-manager for naming/classification info (there **is** a push for
 disc-catalog linking — see below — but not for content type). The filename
 suffix is the only channel available, which is why it has to match

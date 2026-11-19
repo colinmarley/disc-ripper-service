@@ -8,26 +8,37 @@ services:
       logging_project: "disc-ripper-service"
       logging_service: "backend"
     ports:
-      - "8083:8083"
+      - "${RIPPER_PORT:-8083}:8083"
     devices:
-      - "/dev/sr0:/dev/sr0"
-      - "/dev/sg3:/dev/sg3"
+      # Optical drive block device plus its SCSI generic node (MakeMKV needs
+      # both). Find yours with `lsscsi -g` or `ls -l /dev/sr* /dev/sg*`.
+      - "${DISC_DEVICE_PATH:-/dev/sr0}:/dev/sr0"
+      - "${DISC_SG_DEVICE_PATH:-/dev/sg0}:${DISC_SG_DEVICE_PATH:-/dev/sg0}"
+    # Optional: loads TMDB_API_KEY, LOCALAI_API_KEY etc. from ./.env
+    env_file:
+      - path: .env
+        required: false
     volumes:
-      - /data/media/rips:/data/media/rips
-      - /ark/media/jellyfin/ingest:/ark/media/jellyfin/ingest
+      # Intermediate rip output — fast local disk recommended
+      - ${RIPS_DIR:-./data/rips}:/data/media/rips
+      # Final delivery folder (e.g. a Jellyfin / my-media-manager ingest dir).
+      # Mounted at the same path inside the container as INGEST_ROOT so that
+      # file paths reported to my-media-manager resolve on both sides.
+      - ${INGEST_DIR:-./data/ingest}:${INGEST_ROOT:-/data/ingest}
       - ripper_db:/data/ripper
-      # MakeMKV license — stored in host's ~/.MakeMKV/settings.conf
-      - ${HOME}/.MakeMKV:/root/.MakeMKV:ro
+      # MakeMKV license — the host's ~/.MakeMKV/settings.conf
+      - ${MAKEMKV_CONFIG_DIR:-${HOME}/.MakeMKV}:/root/.MakeMKV:ro
     environment:
       RIPS_ROOT: /data/media/rips
-      INGEST_ROOT: /ark/media/jellyfin/ingest
+      INGEST_ROOT: ${INGEST_ROOT:-/data/ingest}
       DB_PATH: /data/ripper/ripper.db
       LOGS_ROOT: /data/ripper/logs
       MAKEMKVCON_PATH: makemkvcon
-      LOCALAI_URL: http://192.168.0.227:8080
-      LOCALAI_API_KEY: "${LOCALAI_API_KEY}"
-      LOCALAI_ANALYSIS_MODEL: qwen2.5-14b
-      HOST_ID: ai-workstation
+      LOCALAI_URL: ${LOCALAI_URL:-http://localhost:8080}
+      LOCALAI_API_KEY: "${LOCALAI_API_KEY:-}"
+      LOCALAI_ANALYSIS_MODEL: ${LOCALAI_ANALYSIS_MODEL:-qwen2.5-14b}
+      MEDIA_MANAGER_API_URL: ${MEDIA_MANAGER_API_URL:-http://localhost:8082}
+      HOST_ID: ${HOST_ID:-disc-ripper}
       LOG_PROJECT: disc-ripper-service
       LOG_SERVICE: backend
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"

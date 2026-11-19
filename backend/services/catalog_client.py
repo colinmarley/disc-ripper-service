@@ -78,7 +78,7 @@ async def link_delivered_files(file_paths: list[str], disc_id: str) -> bool:
     Tell my-media-manager which disc a set of just-delivered files came from.
 
     This is the only point where that link is ever communicated —
-    _run_deliver() moves files into the shared /ark ingest bind mount with
+    _run_deliver() moves files into the shared ingest bind mount with
     no other push to my-media-manager, so if this call doesn't happen (or
     fails), the files land and get ingested normally but with no disc_id set.
     Best-effort: logs and returns False on failure rather than raising, since

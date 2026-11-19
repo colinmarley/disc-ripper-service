@@ -12,3 +12,6 @@ test_logs.txt
 /blob-report/
 /playwright/.cache/
 node_modules/
+
+# Local docker compose data dirs
+/data/

@@ -9,7 +9,7 @@ class Settings(BaseSettings):
 
     # Paths
     rips_root: str = Field(default="/data/media/rips", validation_alias="RIPS_ROOT")
-    ingest_root: str = Field(default="/ark/media/jellyfin/ingest", validation_alias="INGEST_ROOT")
+    ingest_root: str = Field(default="/data/ingest", validation_alias="INGEST_ROOT")
     db_path: str = Field(default="/data/ripper/ripper.db", validation_alias="DB_PATH")
 
     # Tool paths
@@ -25,14 +25,14 @@ class Settings(BaseSettings):
     logs_root: str = Field(default="/data/ripper/logs", validation_alias="LOGS_ROOT")
 
     # LocalAI AI analysis
-    localai_url: str = Field(default="http://192.168.0.227:8080", validation_alias="LOCALAI_URL")
+    localai_url: str = Field(default="http://localhost:8080", validation_alias="LOCALAI_URL")
     localai_api_key: str = Field(default="", validation_alias="LOCALAI_API_KEY")
     localai_analysis_model: str = Field(default="qwen2.5-14b", validation_alias="LOCALAI_ANALYSIS_MODEL")
 
     # my-media-manager's Postgres-backed catalog API — canonical source of truth
     # for physical disc records (see backend/services/catalog_client.py).
     media_manager_api_url: str = Field(
-        default="http://192.168.0.227:8082", validation_alias="MEDIA_MANAGER_API_URL"
+        default="http://localhost:8082", validation_alias="MEDIA_MANAGER_API_URL"
     )
 
     # TMDB — used for movie/show search during rip configuration (services/tmdb_service.py).
