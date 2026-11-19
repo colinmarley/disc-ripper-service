@@ -1,7 +1,7 @@
 # API Reference
 
-Base URL: `http://<host>:8083` (ai-workstation, port 8083). No authentication —
-this service is only reachable on the homelab LAN, same trust model as its
+Base URL: `http://<host>:8083` (default port 8083). No authentication —
+run it only on a trusted LAN, same trust model as its
 caller (my-media-manager's disc-ripper admin page).
 
 ## Disc (`/disc`)
@@ -23,7 +23,7 @@ caller (my-media-manager's disc-ripper admin page).
 | GET | `/jobs/{id}/files/{file_index}/stream` | Stream a delivered output file (range-request support, for in-browser preview) |
 | PATCH | `/jobs/{id}/files/{file_index}` | Rename a delivered file on disk (`status` must be `done`) |
 | GET | `/jobs/{id}/log` | Server-Sent Events stream of live job log output |
-| POST | `/jobs/{id}/analyze` | Trigger Ollama AI failure analysis (failed jobs only, ~30-90s) |
+| POST | `/jobs/{id}/analyze` | Trigger LLM failure analysis (OpenAI-compatible endpoint) (failed jobs only, ~30-90s) |
 | GET | `/jobs/{id}/analysis` | Fetch a saved analysis, `404` if none exists yet |
 
 ### Start Job request body

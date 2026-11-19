@@ -5,7 +5,7 @@ import { defineConfig, devices } from '@playwright/test';
  * directly by the FastAPI app at GET /. Points at BASE_URL (default:
  * localhost:8083) rather than starting its own server — this service needs
  * makemkvcon/the optical drive to be meaningful, so it's normally run via
- * `docker compose up` on ai-workstation, not spun up ad hoc for tests.
+ * `docker compose up` on the host with the drive, not spun up ad hoc for tests.
  *
  * Realistic boundary: GET /disc/info wraps a real makemkvcon scan of
  * physical hardware — no spec here should assume a disc is in the drive.
