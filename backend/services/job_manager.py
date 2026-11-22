@@ -662,6 +662,12 @@ class JobManager:
         else:
             await log("[deliver] Warning: could not write the manifest into the delivery folder")
 
+        # Tell the library which files are coming before the first one lands.
+        if await self.sync_library(job_id):
+            await log("[deliver] Rip record registered with my-media-manager")
+        else:
+            await log("[deliver] my-media-manager did not take the rip record yet — will retry after delivery")
+
         delivered = []
         for row in ripped:
             src_path, dest_file = Path(row.rip_path), planned[row.id]
@@ -681,12 +687,20 @@ class JobManager:
         any_failed = any(r.status == "failed" for r in rows)
         self._write_manifest(job_id, "partial" if any_failed else "delivered", catalog_disc, str(title_dir))
 
-        if job.catalog_disc_id and delivered:
-            linked = await catalog_client.link_delivered_files(delivered, job.catalog_disc_id)
+        if await self.sync_library(job_id):
+            await log(f"[deliver] Rip record stored in my-media-manager ({len(delivered)} file(s))")
+        else:
             await log(
-                f"[deliver] Linked {len(delivered)} file(s) to catalog disc {job.catalog_disc_id}"
-                if linked else "[deliver] Warning: could not link files to catalog disc (my-media-manager unreachable?)"
+                "[deliver] Warning: my-media-manager did not take the rip record "
+                f"({self._sync_error(job_id)}) — it is kept here and retried"
             )
+            # A library without the rip-record endpoint still gets the disc link.
+            if job.catalog_disc_id and delivered:
+                linked = await catalog_client.link_delivered_files(delivered, job.catalog_disc_id)
+                await log(
+                    f"[deliver] Linked {len(delivered)} file(s) to catalog disc {job.catalog_disc_id}"
+                    if linked else "[deliver] Warning: could not link files to catalog disc either"
+                )
 
         self._set_status(job_id, "done")
         await log(f"[deliver] Job complete. {len(delivered)} file(s) delivered.")
@@ -721,6 +735,88 @@ class JobManager:
             db.commit()
             return paths["folder"]
 
+    # ------------------------------------------------------------------
+    # Library sync (outbox)
+    # ------------------------------------------------------------------
+
+    async def sync_library(self, job_id: str) -> bool:
+        """Send the job's stored manifest to my-media-manager.
+
+        The outcome is recorded on the job (`library_sync_state` = synced |
+        failed, with the error), so a rip made while the library was down is
+        picked up by `run_sync_worker` or `POST /jobs/sync-all`.
+        """
+        payload = manifest_service.read_stored_manifest(job_id)
+        if payload is None:
+            return False
+        ok, error = await catalog_client.put_rip_record(job_id, payload)
+        self._update_sync(job_id, "synced" if ok else "failed", None if ok else error)
+        if not ok:
+            logger.warning("library_sync_failed", job_id=job_id, error=error)
+        return ok
+
+    def mark_sync_pending(self, job_id: str) -> None:
+        """The stored manifest changed (e.g. a file was renamed): send it again."""
+        self._update_sync(job_id, "pending", None)
+
+    def unsynced_job_ids(self) -> list[str]:
+        """Delivered jobs whose record has not reached the library."""
+        with SessionLocal() as db:
+            rows = (
+                db.query(RipJob.id)
+                .filter(
+                    RipJob.status == "done",
+                    RipJob.manifest_path.isnot(None),
+                    RipJob.library_sync_state.in_(("pending", "failed")),
+                )
+                .order_by(RipJob.created_at)
+                .all()
+            )
+            return [row[0] for row in rows]
+
+    async def sync_all(self, include_synced: bool = False) -> dict:
+        """Push every delivered job's record. With `include_synced`, also the
+        ones already sent and the ones never tried (a backfill)."""
+        if include_synced:
+            with SessionLocal() as db:
+                ids = [
+                    row[0] for row in db.query(RipJob.id)
+                    .filter(RipJob.status == "done", RipJob.manifest_path.isnot(None))
+                    .order_by(RipJob.created_at).all()
+                ]
+        else:
+            ids = self.unsynced_job_ids()
+        synced, failed = [], []
+        for job_id in ids:
+            (synced if await self.sync_library(job_id) else failed).append(job_id)
+        return {"synced": synced, "failed": failed}
+
+    async def run_sync_worker(self):
+        """Retry rip records the library has not taken yet."""
+        while True:
+            await asyncio.sleep(max(5, settings.library_sync_interval_seconds))
+            try:
+                for job_id in self.unsynced_job_ids():
+                    if job_id != self._active_job_id:
+                        await self.sync_library(job_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # the loop must survive anything
+                logger.warning("library_sync_worker_error", error=str(exc))
+
+    def _update_sync(self, job_id: str, state: str, error: Optional[str]) -> None:
+        with SessionLocal() as db:
+            job = db.get(RipJob, job_id)
+            if job is not None:
+                job.library_sync_state = state
+                job.library_sync_error = error
+                db.commit()
+
+    def _sync_error(self, job_id: str) -> str:
+        with SessionLocal() as db:
+            job = db.get(RipJob, job_id)
+            return (job.library_sync_error if job else None) or "no response"
+
     def _write_terminal_manifest(self, job_id: str, status: str) -> None:
         """Keep a record of failed/cancelled jobs too (ripper volume only)."""
         try:
@@ -746,6 +842,8 @@ class JobManager:
             job_id, previous.get("status", "delivered"), None,
             str(title_dir) if title_dir.is_dir() else None,
         )
+        # The library keys the record by path: it has to hear about the rename.
+        self.mark_sync_pending(job_id)
 
     # ------------------------------------------------------------------
     # Per-title records

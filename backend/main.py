@@ -77,12 +77,14 @@ async def lifespan(app: FastAPI):
     if recovered:
         logger.warning("stale_jobs_recovered", count=recovered)
     worker = asyncio.create_task(job_manager.run_worker())
+    sync_worker = asyncio.create_task(job_manager.run_sync_worker())
     yield
-    worker.cancel()
-    try:
-        await worker
-    except asyncio.CancelledError:
-        pass
+    for task in (worker, sync_worker):
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(title="Disc Ripper Service", version="1.0.0", lifespan=lifespan)

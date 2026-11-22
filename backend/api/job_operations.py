@@ -12,6 +12,7 @@ from db.models import JobAnalysis, RipJob
 from services import catalog_client
 from services import manifest as manifest_service
 from services.analysis_service import analyze_failed_job, get_job_analysis
+from config.settings import settings
 from services.job_manager import job_manager
 from homelab_logging import setup_logging, get_logger
 from homelab_logging.config import LoggingConfig
@@ -154,14 +155,32 @@ async def start_job(req: StartJobRequest):
             detail=f"A job for '{req.title} ({req.year})' is already active (id: {dupe.id})",
         )
 
+    if settings.require_catalog_disc and not req.catalog_disc_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "catalog_disc_id is required: link the rip to a disc in the my-media-manager "
+                "catalog (its Rip Disc page creates one), or set REQUIRE_CATALOG_DISC=false"
+            ),
+        )
+
     if req.catalog_disc_id:
-        # Best-effort validation only: catalog_client swallows unreachable-service
-        # errors as None, same as a real 404, so we can't distinguish "the disc
-        # doesn't exist" from "my-media-manager is briefly down" here. A rip job
-        # shouldn't be blocked by a catalog API hiccup, so we warn rather than reject.
-        disc = await catalog_client.get_disc(req.catalog_disc_id)
-        if disc is None:
-            logger.warning("catalog_disc_id_unverified", catalog_disc_id=req.catalog_disc_id)
+        found = await catalog_client.check_disc(req.catalog_disc_id)
+        if found == "missing" and settings.require_catalog_disc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"catalog_disc_id '{req.catalog_disc_id}' is not a disc in the my-media-manager catalog",
+            )
+        if found == "unreachable" and settings.require_catalog_disc:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Could not reach the my-media-manager catalog to check the disc "
+                    f"({settings.media_manager_api_url}). Try again, or set REQUIRE_CATALOG_DISC=false"
+                ),
+            )
+        if found != "found":
+            logger.warning("catalog_disc_id_unverified", catalog_disc_id=req.catalog_disc_id, result=found)
 
     job = job_manager.create_job(req.model_dump())
     return _job_dict(job)
@@ -273,6 +292,25 @@ async def rename_file(job_id: str, file_index: int, body: RenameFileRequest):
     # The per-title record and the manifest are keyed by path: keep them in step.
     job_manager.rename_delivered_file(job_id, str(old_path), str(new_path))
     return _job_dict(job_manager.get_job(job_id))
+
+
+@router.post("/sync-all")
+async def sync_all_jobs(all: bool = False):
+    """Send rip records my-media-manager has not taken yet. `?all=true` sends
+    every delivered job's record again (a backfill; the library ignores repeats)."""
+    return await job_manager.sync_all(include_synced=all)
+
+
+@router.post("/{job_id}/sync")
+async def sync_job(job_id: str):
+    """Send one job's rip record to my-media-manager now."""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not job.manifest_path:
+        raise HTTPException(status_code=400, detail="This job has no manifest to send")
+    ok = await job_manager.sync_library(job_id)
+    return _job_dict(job_manager.get_job(job_id)) | {"synced": ok}
 
 
 @router.get("/{job_id}/titles")
