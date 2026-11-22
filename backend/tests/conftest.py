@@ -13,6 +13,9 @@ os.environ.setdefault("DB_PATH", os.path.join(_tmpdir, "test.db"))
 os.environ.setdefault("LOGS_ROOT", os.path.join(_tmpdir, "logs"))
 os.environ.setdefault("RIPS_ROOT", os.path.join(_tmpdir, "rips"))
 os.environ.setdefault("INGEST_ROOT", os.path.join(_tmpdir, "ingest"))
+# Most tests are about ripping, not the catalog; the ones about the
+# requirement turn it on themselves.
+os.environ.setdefault("REQUIRE_CATALOG_DISC", "false")
 
 import pytest
 from sqlalchemy import delete
@@ -38,7 +41,8 @@ def mock_run_worker():
     async def _noop():
         await asyncio.sleep(1e9)
 
-    with patch.object(jm_module.job_manager, "run_worker", _noop):
+    with patch.object(jm_module.job_manager, "run_worker", _noop), \
+         patch.object(jm_module.job_manager, "run_sync_worker", _noop):
         yield
 
 

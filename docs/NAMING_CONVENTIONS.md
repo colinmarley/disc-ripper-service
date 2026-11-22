@@ -67,10 +67,9 @@ my-media-manager's classifier exactly.
 
 ## Physical disc linking (separate from naming)
 
-`catalog_disc_id` on a job does **not** affect naming at all — it's
-communicated via a real API call instead, `POST /api/catalog/link-source`
-on my-media-manager (`backend/services/catalog_client.py::link_delivered_files`,
-called right after delivery). Best-effort: if my-media-manager is
-unreachable when this call happens, the rip still completes and the files
-still ingest normally — they just won't show up under the disc's linked
-files until connected manually.
+`catalog_disc_id` on a job does **not** affect naming. It travels in the rip
+record pushed to my-media-manager (`PUT /api/rips/{job_id}`, see
+[API.md](./API.md#sending-the-record-to-my-media-manager)), which links every
+delivered file to the disc and its release. If that push fails after
+delivery, `POST /api/catalog/link-source` is called as a fallback; the record
+itself is kept and retried.

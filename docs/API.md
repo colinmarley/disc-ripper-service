@@ -32,6 +32,8 @@ mount of the disc and is the same on every scan of the same pressing.
 | PATCH | `/jobs/{id}/files/{file_index}` | Rename a delivered file on disk (`status` must be `done`) |
 | GET | `/jobs/{id}/titles` | Per-file records: source title index, MakeMKV's own filename, delivered path, size, sha256, read errors, rip times |
 | GET | `/jobs/{id}/manifest` | The rip manifest (see below), `404` until one is written |
+| POST | `/jobs/{id}/sync` | Send this job's rip record to my-media-manager now |
+| POST | `/jobs/sync-all` | Send every record my-media-manager has not taken yet; `?all=true` re-sends all delivered jobs (backfill) |
 | GET | `/jobs/{id}/log` | Server-Sent Events stream of live job log output |
 | POST | `/jobs/{id}/analyze` | Trigger LLM failure analysis (OpenAI-compatible endpoint) (failed jobs only, ~30-90s) |
 | GET | `/jobs/{id}/analysis` | Fetch a saved analysis, `404` if none exists yet |
@@ -48,7 +50,7 @@ mount of the disc and is the same on every scan of the same pressing.
   "season": 1,
   "mkv_title_indices": [0, 1, 2],
   "episode_map": {"0": "S01E01", "1": "S01E02"},
-  "catalog_disc_id": "my-media-manager Disc.id (optional)",
+  "catalog_disc_id": "my-media-manager Disc.id (required unless REQUIRE_CATALOG_DISC=false)",
   "title_content_types": {"2": "trailer"},
   "tmdb_id": 1437,
   "scan_id": "from GET /disc/info (optional)",
@@ -78,6 +80,29 @@ turns the check off.
 slug (see [NAMING_CONVENTIONS.md](./NAMING_CONVENTIONS.md)) — that title
 gets routed to a suffix-based filename instead of normal movie/episode
 naming, taking priority over `episode_map` for the same index.
+
+## Catalog disc requirement
+
+With `REQUIRE_CATALOG_DISC=true` (the default) `POST /jobs/start` answers:
+
+- `400` when `catalog_disc_id` is missing, or is not a disc in the my-media-manager catalog;
+- `503` when the catalog could not be asked.
+
+Set `REQUIRE_CATALOG_DISC=false` to rip without a catalogued disc.
+
+## Sending the record to my-media-manager
+
+The manifest is also pushed to `PUT {MEDIA_MANAGER_API_URL}/api/rips/{job_id}`:
+once before any file is moved (status `delivering`, so the library expects
+the files) and once after delivery (`delivered` / `partial`).
+
+A push that fails never fails the rip. The outcome is on the job as
+`library_sync_state` (`synced`, `failed`, `pending`) and
+`library_sync_error`; unsent records are retried every
+`LIBRARY_SYNC_INTERVAL_SECONDS` (60) and by `POST /jobs/sync-all`. If the
+push after delivery fails, the older `POST /api/catalog/link-source` call is
+made as a fallback so a library without the rip endpoint still gets the
+disc link. Renaming a delivered file marks the record `pending` again.
 
 ## Rip manifest
 

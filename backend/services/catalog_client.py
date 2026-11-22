@@ -21,6 +21,8 @@ setup_logging(LoggingConfig(project="disc-ripper-service", service="backend"))
 logger = get_logger(__name__)
 
 _TIMEOUT = 10.0
+# A manifest carries every title and stream of the disc; give the store time.
+_RIP_RECORD_TIMEOUT = 30.0
 
 
 async def search_discs(title: str | None = None, barcode: str | None = None) -> list[dict]:
@@ -93,3 +95,42 @@ async def link_delivered_files(file_paths: list[str], disc_id: str) -> bool:
     except httpx.HTTPError as exc:
         logger.warning("catalog_link_source_failed", disc_id=disc_id, error=str(exc))
         return False
+
+
+async def check_disc(disc_id: str) -> str:
+    """Whether a catalog disc exists: "found", "missing" or "unreachable".
+
+    Unlike get_disc this tells a disc that is not in the catalog apart from
+    a catalog that could not be asked.
+    """
+    url = f"{settings.media_manager_api_url}/api/catalog/discs/{disc_id}"
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            response = await client.get(url)
+    except httpx.HTTPError as exc:
+        logger.warning("catalog_check_disc_failed", disc_id=disc_id, error=str(exc))
+        return "unreachable"
+    if response.status_code == 404:
+        return "missing"
+    if response.status_code >= 400:
+        logger.warning("catalog_check_disc_failed", disc_id=disc_id, status=response.status_code)
+        return "unreachable"
+    return "found"
+
+
+async def put_rip_record(job_id: str, manifest: dict) -> tuple[bool, str | None]:
+    """Send a rip's manifest to my-media-manager (`PUT /api/rips/{job_id}`).
+
+    The endpoint is idempotent on the job id, so this is safe to repeat.
+    Returns (ok, error); never raises, because a library that is down must
+    not fail a rip — the job keeps the record and tries again later.
+    """
+    url = f"{settings.media_manager_api_url}/api/rips/{job_id}"
+    try:
+        async with httpx.AsyncClient(timeout=_RIP_RECORD_TIMEOUT) as client:
+            response = await client.put(url, json=manifest)
+    except httpx.HTTPError as exc:
+        return False, f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+    if response.status_code >= 400:
+        return False, f"HTTP {response.status_code}: {response.text[:300]}"
+    return True, None

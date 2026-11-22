@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     # hold a different disc. Turn off if it ever rejects the right disc.
     verify_disc_matches_scan: bool = Field(default=True, validation_alias="VERIFY_DISC_MATCHES_SCAN")
 
+    # A rip must name the catalogued disc it is ripping (catalog_disc_id).
+    require_catalog_disc: bool = Field(default=True, validation_alias="REQUIRE_CATALOG_DISC")
+
+    # How often rip records that have not reached my-media-manager are retried.
+    library_sync_interval_seconds: int = Field(default=60, validation_alias="LIBRARY_SYNC_INTERVAL_SECONDS")
+
     # Recorded in the rip manifest so the library knows which machine ripped.
     host_id: str = Field(default="disc-ripper", validation_alias="HOST_ID")
 

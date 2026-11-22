@@ -82,7 +82,7 @@ def fake_makemkv(behaviour: dict[int, dict], procs: list | None = None):
 async def _rip_and_deliver(job_id: str, behaviour: dict, catalog_disc=CATALOG_DISC):
     with patch("services.job_manager.asyncio.create_subprocess_exec", new=fake_makemkv(behaviour)), \
          patch("services.job_manager.catalog_client.get_disc", new=AsyncMock(return_value=catalog_disc)), \
-         patch("services.job_manager.catalog_client.link_delivered_files", new=AsyncMock(return_value=True)):
+         patch("services.job_manager.catalog_client.put_rip_record", new=AsyncMock(return_value=(True, None))),          patch("services.job_manager.catalog_client.link_delivered_files", new=AsyncMock(return_value=True)):
         await job_manager._run_rip(job_id, _null_log)
         await job_manager._run_deliver(job_id, _null_log)
 
