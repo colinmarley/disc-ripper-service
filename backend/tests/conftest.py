@@ -52,7 +52,7 @@ def clean_db(ensure_tables, mock_run_worker):
     """
     import asyncio
     from db.database import SessionLocal
-    from db.models import JobAnalysis, RipJob
+    from db.models import DiscScan, JobAnalysis, RipJob, RipTitle
     from services.job_manager import job_manager
 
     job_manager._new_job_event = asyncio.Event()
@@ -63,6 +63,8 @@ def clean_db(ensure_tables, mock_run_worker):
 
     with SessionLocal() as db:
         db.execute(delete(JobAnalysis))
+        db.execute(delete(RipTitle))
+        db.execute(delete(DiscScan))
         db.execute(delete(RipJob))
         db.commit()
     yield

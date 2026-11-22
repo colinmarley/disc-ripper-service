@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from db.database import SessionLocal
 from db.models import JobAnalysis, RipJob
 from services import catalog_client
+from services import manifest as manifest_service
 from services.analysis_service import analyze_failed_job, get_job_analysis
 from services.job_manager import job_manager
 from homelab_logging import setup_logging, get_logger
@@ -27,17 +28,36 @@ class RenameFileRequest(BaseModel):
     name: str
 
 
+class TitleDeclaration(BaseModel):
+    """What one selected disc title is, as declared when the rip is set up."""
+    title_index: int
+    # "main_feature" | "episode" | an extras category slug ("trailer", ...)
+    content_type: Optional[str] = None
+    is_main_feature: Optional[bool] = None
+    season: Optional[int] = None
+    episode: Optional[int] = None
+    episode_end: Optional[int] = None       # last episode of a multi-episode title
+    tmdb_episode_id: Optional[int] = None
+    episode_name: Optional[str] = None
+    custom_name: Optional[str] = None       # free-text name instead of an episode code
+
+
 class StartJobRequest(BaseModel):
     disc_type: str                      # "dvd" | "bluray"
     media_type: str                     # "movie" | "show"
     title: str
     year: int
     imdb_id: Optional[str] = None
+    tmdb_id: Optional[int] = None       # TMDB movie id or series id
     season: Optional[int] = None
     mkv_title_indices: list[int] = [0]
     episode_map: Optional[dict[str, str]] = None  # {"0": "S01E01", "1": "S01E02"}
     catalog_disc_id: Optional[str] = None  # links this rip to a my-media-manager Disc record
     title_content_types: Optional[dict[str, str]] = None  # {"0": "trailer", "2": "deleted_scene"}
+    scan_id: Optional[str] = None       # from GET /disc/info — ties the job to that scan
+    # Structured per-title declarations. When given, episode_map and
+    # title_content_types are derived from it unless they are also sent.
+    titles: Optional[list[TitleDeclaration]] = None
 
 
 def _analysis_dict(a: JobAnalysis) -> dict:
@@ -75,6 +95,35 @@ def _job_dict(job) -> dict:
         "output_paths": job.output_paths,
         "catalog_disc_id": job.catalog_disc_id,
         "title_content_types": job.title_content_types,
+        "tmdb_id": job.tmdb_id,
+        "scan_id": job.scan_id,
+        "scan_link": job.scan_link,
+        "fingerprint": job.fingerprint,
+        "title_declarations": job.title_declarations,
+        "rip_started_at": job.rip_started_at.isoformat() if job.rip_started_at else None,
+        "rip_finished_at": job.rip_finished_at.isoformat() if job.rip_finished_at else None,
+        "delivered_at": job.delivered_at.isoformat() if job.delivered_at else None,
+        "has_manifest": bool(job.manifest_path),
+        "library_sync_state": job.library_sync_state,
+        "library_sync_error": job.library_sync_error,
+    }
+
+
+def _rip_title_dict(row) -> dict:
+    return {
+        "title_index": row.title_index,
+        "file_seq": row.file_seq,
+        "status": row.status,
+        "error": row.error,
+        "makemkv_filename": row.makemkv_filename,
+        "dest_path": row.dest_path,
+        "size_bytes": row.size_bytes,
+        "sha256": row.sha256,
+        "read_errors": row.read_errors or 0,
+        "messages": row.messages or [],
+        "rip_started_at": row.rip_started_at.isoformat() if row.rip_started_at else None,
+        "rip_finished_at": row.rip_finished_at.isoformat() if row.rip_finished_at else None,
+        "duration_seconds": (row.probe or {}).get("duration_seconds"),
     }
 
 
@@ -138,6 +187,11 @@ async def retry_job(job_id: str):
         "episode_map": original.episode_map,
         "catalog_disc_id": original.catalog_disc_id,
         "title_content_types": original.title_content_types,
+        "tmdb_id": original.tmdb_id,
+        # Only a scan the user explicitly chose is carried over; an inferred
+        # one is re-inferred (the disc may have been swapped since).
+        "scan_id": original.scan_id if original.scan_link == "declared" else None,
+        "title_declarations": original.title_declarations,
     })
     return _job_dict(new_job)
 
@@ -215,8 +269,30 @@ async def rename_file(job_id: str, file_index: int, body: RenameFileRequest):
         paths[file_index] = str(new_path)
         j.output_paths = paths
         db.commit()
-        db.refresh(j)
-        return _job_dict(j)
+
+    # The per-title record and the manifest are keyed by path: keep them in step.
+    job_manager.rename_delivered_file(job_id, str(old_path), str(new_path))
+    return _job_dict(job_manager.get_job(job_id))
+
+
+@router.get("/{job_id}/titles")
+async def get_job_titles(job_id: str):
+    """Per-file records of a job: which disc title each file came from, its
+    size, checksum, read errors and delivered path."""
+    if not job_manager.get_job(job_id):
+        raise HTTPException(status_code=404, detail="Job not found")
+    return [_rip_title_dict(r) for r in job_manager.rip_titles(job_id)]
+
+
+@router.get("/{job_id}/manifest")
+async def get_job_manifest(job_id: str):
+    """The rip manifest as delivered with the files (the ripper's own copy)."""
+    if not job_manager.get_job(job_id):
+        raise HTTPException(status_code=404, detail="Job not found")
+    manifest = manifest_service.read_stored_manifest(job_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="No manifest for this job")
+    return manifest
 
 
 @router.get("/{job_id}/log")

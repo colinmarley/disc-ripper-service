@@ -29,6 +29,17 @@ def _migrate_db():
         ("log_path", "TEXT"),
         ("catalog_disc_id", "TEXT"),
         ("title_content_types", "TEXT"),
+        ("tmdb_id", "INTEGER"),
+        ("scan_id", "VARCHAR"),
+        ("scan_link", "VARCHAR"),
+        ("fingerprint", "VARCHAR"),
+        ("title_declarations", "JSON"),
+        ("rip_started_at", "DATETIME"),
+        ("rip_finished_at", "DATETIME"),
+        ("delivered_at", "DATETIME"),
+        ("manifest_path", "TEXT"),
+        ("library_sync_state", "VARCHAR"),
+        ("library_sync_error", "TEXT"),
     ]
     with engine.connect() as conn:
         existing = {

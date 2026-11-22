@@ -35,6 +35,27 @@ signal for ≥80% confidence auto-assignment on ingest.
 over the movie/episode rules above, even on a multi-title disc that would
 otherwise get `- Version N` naming.
 
+A movie's extras do not count towards multi-version naming: one feature
+plus a trailer delivers as `{title} ({year}).mkv` and
+`{title} ({year})-trailer.mkv`.
+
+Delivery never overwrites. If the computed name is already taken (a second
+disc of the same film, or a re-rip), ` - Copy {n}` is inserted — before the
+extras suffix, which must stay at the end of the stem:
+`{title} ({year}) - Copy 2.mkv`, `{title} ({year}) - Copy 2-trailer.mkv`.
+
+Each name is computed from what that file's own disc title was declared to
+be (`rip_titles.title_index`), never from the file's position in the rip
+directory, so a title that fails to rip cannot shift the names of the rest.
+
+## Rip manifest
+
+Alongside the files, `_rip_manifest.<job8>.json` in the title folder
+carries the full record of the rip (disc identity, every title on the
+disc, and per delivered file its source title and declared episode or
+content type) — see [API.md](./API.md#rip-manifest). Filenames remain the
+fallback channel for a consumer that does not read the manifest.
+
 ## Why the suffix, not something richer
 
 Delivery is filesystem-only — `_run_deliver()` moves files into the shared
