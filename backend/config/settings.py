@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     # minute per 30 GB title on NVMe).
     hash_ripped_files: bool = Field(default=True, validation_alias="HASH_RIPPED_FILES")
 
+    # Fail a job whose scan was explicitly chosen if the drive turns out to
+    # hold a different disc. Turn off if it ever rejects the right disc.
+    verify_disc_matches_scan: bool = Field(default=True, validation_alias="VERIFY_DISC_MATCHES_SCAN")
+
     # Recorded in the rip manifest so the library knows which machine ripped.
     host_id: str = Field(default="disc-ripper", validation_alias="HOST_ID")
 

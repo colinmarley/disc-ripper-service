@@ -166,3 +166,29 @@ def test_save_scan_persists_raw_and_parsed():
         assert row.raw_output == raw
         assert row.parsed["titles"][0]["source_file"] == "00800.mpls"
         assert row.fingerprint == summary["fingerprint"]
+
+
+def test_real_dvd_scan():
+    """Captured from the drive (MakeMKV 2.0.0, a 2-disc TV season DVD)."""
+    scan = parse_scan(_load("dvd_tv_real_info.txt"))
+    assert scan["makemkv_version"] == "MakeMKV v2.0.0 linux(x64-release)"
+    assert scan["disc"]["disc_type"] == "DVD disc"
+    assert scan["disc"]["volume_label"] == "BURNNOTICE_S1_D2"
+    # With --noscan the drive line has no disc label; the volume name is the label.
+    assert scan["drive"]["label"] == ""
+    assert scan["drive"]["device"] == "/dev/sr0"
+    assert len(scan["titles"]) == 16
+    assert scan["skipped_short"] == 28
+
+    episode = scan["titles"][2]
+    assert episode["duration_seconds"] == 2542
+    assert episode["chapter_count"] == 13
+    assert episode["output_filename"] == "C1_t02.mkv"
+    assert episode["original_title_id"] == "02"
+    assert episode["segment_map"] == "1-10,11-14,15-22,23"
+    audio = [s for s in episode["streams"] if s["type"] == "audio"]
+    assert [(s["lang_code"], s["channels"], s["default"]) for s in audio] == [("eng", 6, True), ("eng", 2, False)]
+    subs = [s for s in episode["streams"] if s["type"] == "subtitles"]
+    assert [s["lang_code"] for s in subs] == ["eng", "spa", "fre", "eng"]
+    assert len(fingerprint(scan)) == 64
+    assert sum(1 for m in scan["messages"] if m["code"] == 3028) >= 16

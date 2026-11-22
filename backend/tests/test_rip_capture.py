@@ -498,3 +498,51 @@ def test_declarations_fall_back_to_legacy_fields(make_job):
     assert (decl[0]["season"], decl[0]["episode"], decl[0]["episode_name"]) == (2, 4, "Name")
     assert decl[1]["content_type"] == "episode" and decl[1]["season"] == 2
     assert decl[1].get("episode") is None
+
+
+# ── Wrong-disc check from the disc structure ────────────────────────────────
+# With --noscan the drive line carries no disc label on the real host, so the
+# check that actually fires there is the "Title #N was added" comparison.
+
+REAL_SCAN = FIXTURES / "dvd_tv_real_info.txt"
+
+
+def _real_scan_job(make_job, title: str, link: str = "declared") -> tuple[str, list[str]]:
+    raw = REAL_SCAN.read_text(encoding="utf-8")
+    scan = save_scan(raw, parse_scan(raw))
+    added = [line for line in raw.splitlines() if line.startswith("MSG:3028,")]
+    job_id = make_job(
+        status="queued", media_type="show", title=title, year=2007, season=1,
+        mkv_title_indices=[2], episode_map={"2": "S01E05"},
+        scan_id=scan["scan_id"], scan_link=link, fingerprint=scan["fingerprint"],
+    )
+    return job_id, added
+
+
+@pytest.mark.asyncio
+async def test_same_disc_structure_passes_the_check(make_job):
+    job_id, added = _real_scan_job(make_job, "Same Structure")
+    await _rip_and_deliver(job_id, {2: {"files": ["C1_t02.mkv"], "lines": added}})
+    job = _job(job_id)
+    assert job.status == "done" and job.scan_id is not None
+
+
+@pytest.mark.asyncio
+async def test_different_disc_structure_fails_a_declared_scan(make_job):
+    job_id, added = _real_scan_job(make_job, "Other Structure")
+    foreign = 'MSG:3028,0,3,"Title #1 was added (31 cell(s), 2:01:44)","Title #%1 was added (%2 cell(s), %3)","1","31","2:01:44"'
+    procs: list = []
+    behaviour = {2: {"files": ["C1_t02.mkv"], "lines": [foreign] + added}}
+    with patch("services.job_manager.asyncio.create_subprocess_exec", new=fake_makemkv(behaviour, procs)):
+        with pytest.raises(RuntimeError, match="not the disc this job was configured from"):
+            await job_manager._run_rip(job_id, _null_log)
+    assert procs[0].terminated is True
+
+
+@pytest.mark.asyncio
+async def test_disc_check_can_be_switched_off(make_job, monkeypatch):
+    monkeypatch.setattr(settings, "verify_disc_matches_scan", False)
+    job_id, _ = _real_scan_job(make_job, "Unchecked Structure")
+    foreign = 'MSG:3028,0,3,"Title #1 was added (31 cell(s), 2:01:44)","Title #%1 was added (%2 cell(s), %3)","1","31","2:01:44"'
+    await _rip_and_deliver(job_id, {2: {"files": ["C1_t02.mkv"], "lines": [foreign]}})
+    assert _job(job_id).status == "done"

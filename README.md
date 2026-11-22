@@ -81,6 +81,7 @@ Defaults are container paths.
 | `DISC_DEVICE` | `disc:0` | MakeMKV disc identifier |
 | `SCAN_TIMEOUT_SECONDS` | `300` | How long to wait for a disc scan |
 | `HASH_RIPPED_FILES` | `true` | Record a sha256 of every ripped file in the manifest (about a minute per 30 GB) |
+| `VERIFY_DISC_MATCHES_SCAN` | `true` | Fail a job if the disc in the drive is not the one its scan was taken from |
 | `LOCALAI_URL` | `http://localhost:8080` | OpenAI-compatible base URL (`/v1/chat/completions` is appended). Must be reachable from inside the container |
 | `LOCALAI_API_KEY` | *(empty)* | Bearer token for that endpoint |
 | `LOCALAI_ANALYSIS_MODEL` | `qwen2.5-14b` | Model name for failure analysis |

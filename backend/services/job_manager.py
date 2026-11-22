@@ -168,7 +168,6 @@ class RipLineParser:
         "MSG:1005,",  # "MakeMKV vX.Y.Z started"
         "MSG:3007,",  # "Using direct disc access mode"
         "MSG:3025,",  # "Title too short, skipped"
-        "MSG:3028,",  # "Title #N was added"
         "PRGT:",      # total-progress label (redundant)
     )
     _SUMMARY = ("MSG:5011,", "MSG:5014,", "MSG:5005,", "MSG:5036,")
@@ -178,6 +177,9 @@ class RipLineParser:
         self.read_errors = 0
         self.drive_label: Optional[str] = None
         self.messages: list[str] = []
+        # "Title #N was added (...)" lines: the disc structure as MakeMKV
+        # sees it on this run, used to check it is the scanned disc.
+        self.added_titles: list[str] = []
         self._last_prgc = ""
         self._warn_files: dict[str, int] = {}
 
@@ -194,6 +196,12 @@ class RipLineParser:
             drv = makemkv_service.parse_drv_line(line)
             if drv and drv["label"]:
                 self.drive_label = drv["label"]
+            return []
+
+        if line.startswith("MSG:3028,"):
+            text = _extract_msg_text(line)
+            if text:
+                self.added_titles.append(text)
             return []
 
         if line.startswith(self._NOISE):
@@ -431,13 +439,22 @@ class JobManager:
 
         await log(f"[rip] Output dir: {rip_dir}")
 
-        scan = self._get_scan(job.scan_id)
+        scan = self._get_scan(job.scan_id) if settings.verify_disc_matches_scan else None
         expected_label = (scan.drive_label or "").strip() if scan is not None else ""
+        # MakeMKV re-reads the disc structure for every rip and reports each
+        # title it finds ("Title #2 was added (23 cell(s), 0:42:22)"). The
+        # scan recorded the same lines, so one that the scan never saw means
+        # a different disc is in the drive.
+        expected_added = {
+            m.get("text") for m in ((scan.parsed or {}).get("messages") or [])
+            if m.get("code") == 3028
+        } if scan is not None else set()
         scan_link = job.scan_link
+        duration_scan = self._get_scan(job.scan_id)
         scan_durations = {
             t.get("index"): t.get("duration_seconds", 0)
-            for t in ((scan.parsed or {}).get("titles") or [])
-        } if scan is not None else {}
+            for t in ((duration_scan.parsed or {}).get("titles") or [])
+        } if duration_scan is not None else {}
 
         total = len(job.mkv_title_indices)
         ripped_count = 0
@@ -472,12 +489,20 @@ class JobManager:
                     self._set_progress(job_id, ((title_num - 1) + parser.fraction) / total * 60)
 
                 # The disc in the drive must be the one this job was set up from.
-                if (
-                    expected_label and parser.drive_label and wrong_disc is None
-                    and parser.drive_label.strip().lower() != expected_label.lower()
-                ):
+                mismatch: Optional[str] = None
+                if wrong_disc is None:
+                    if (
+                        expected_label and parser.drive_label
+                        and parser.drive_label.strip().lower() != expected_label.lower()
+                    ):
+                        mismatch = f"drive reports '{parser.drive_label}', the scan was of '{expected_label}'"
+                    elif expected_added:
+                        unknown = next((t for t in parser.added_titles if t not in expected_added), None)
+                        if unknown:
+                            mismatch = f"the scan has no title matching \"{unknown}\""
+                if mismatch:
                     if scan_link == "declared":
-                        wrong_disc = parser.drive_label
+                        wrong_disc = mismatch
                         try:
                             proc.terminate()
                         except Exception:
@@ -485,11 +510,11 @@ class JobManager:
                     else:
                         # The scan was only assumed to belong to this job.
                         await log(
-                            f"[warn] Drive reports disc '{parser.drive_label}', not the last "
-                            f"scanned disc '{expected_label}' — rip continues without scan data"
+                            f"[warn] The disc in the drive is not the last scanned disc ({mismatch}) "
+                            "— rip continues without scan data"
                         )
                         self._update_field(job_id, scan_id=None, scan_link=None, fingerprint=None)
-                        expected_label, scan_durations = "", {}
+                        expected_label, expected_added, scan_durations = "", set(), {}
 
             await proc.wait()
             self._active_proc = None
@@ -499,8 +524,8 @@ class JobManager:
                 raise asyncio.CancelledError()
             if wrong_disc is not None:
                 raise RuntimeError(
-                    f"Disc in drive ('{wrong_disc}') is not the disc this job was configured "
-                    f"from ('{expected_label}'). Scan the disc again and start a new job."
+                    "The disc in the drive is not the disc this job was configured from "
+                    f"({wrong_disc}). Scan the disc again and start a new job."
                 )
 
             new_files = sorted(set(Path(rip_dir).glob("*.mkv")) - before_rip)

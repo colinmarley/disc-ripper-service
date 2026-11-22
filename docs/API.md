@@ -68,9 +68,11 @@ also sent explicitly.
 
 `scan_id` ties the job to one stored scan. If it is omitted the job is
 attached to the most recent scan from the last six hours and marked
-`scan_link: "inferred"`. During the rip the drive's reported disc label is
-compared with the scan's: a mismatch fails a job with a declared scan, and
-silently detaches an inferred one.
+`scan_link: "inferred"`. During the rip the disc in the drive is checked against the scan (the
+drive's disc label where it reports one, and the titles MakeMKV finds on
+the disc): a mismatch fails a job with a declared scan, and detaches an
+inferred one with a warning in the log. `VERIFY_DISC_MATCHES_SCAN=false`
+turns the check off.
 
 `title_content_types` maps a title index to an extras-taxonomy category
 slug (see [NAMING_CONVENTIONS.md](./NAMING_CONVENTIONS.md)) — that title
