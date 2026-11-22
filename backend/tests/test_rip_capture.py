@@ -117,16 +117,52 @@ def test_line_parser_counts_read_errors_and_reads_drive_label():
     assert parser.feed("PRGV:500,0,1000") == []
     assert parser.fraction == 0.5
 
-    first = parser.feed("MSG:4004,0,2,\"Error 'Scsi error' occurred while reading '/VIDEO_TS/VTS_01_1.VOB' at offset '1234'\"")
-    assert len(first) == 1 and first[0].startswith("[warn]")
-    for _ in range(3):
-        assert parser.feed("MSG:4004,0,2,\"Error 'Scsi error' occurred while reading '/VIDEO_TS/VTS_01_1.VOB' at offset '99'\"") == []
-    assert parser.read_errors == 4
+    first = parser.feed("MSG:2003,0,3,\"Error 'Scsi error - MEDIUM ERROR:L-EC UNCORRECTABLE ERROR' occurred while reading '/VIDEO_TS/VTS_01_1.VOB' at offset '1234'\"")
+    assert len(first) == 1 and first[0].startswith("[warn] Read error:")
+    for _ in range(2):
+        assert len(parser.feed("MSG:2003,0,3,\"Error 'Scsi error' occurred while reading '/VIDEO_TS/VTS_01_1.VOB' at offset '99'\"")) == 1
+    assert len(parser.feed("MSG:2003,0,3,\"Error 'Scsi error' occurred while reading '/VIDEO_TS/VTS_01_1.VOB' at offset '100'\"")) == 1
+    assert parser.feed("MSG:2003,0,3,\"Error 'Scsi error' occurred while reading '/VIDEO_TS/VTS_01_1.VOB' at offset '101'\"") == []
+    assert parser.read_errors == 5
+    assert parser.source_warnings == 0
 
     assert parser.feed('MSG:5036,0,1,"Copy complete. 1 titles saved.","Copy complete."') == [
         "[rip] Copy complete. 1 titles saved."
     ]
     assert "Copy complete. 1 titles saved." in parser.messages
+
+
+def test_structure_warnings_are_not_read_errors():
+    """Captured from the drive: a DVD title that rips perfectly emits the same
+    31 of these on every pass. They must not flag the title as damaged."""
+    warning = (
+        "MSG:4004,16777216,2,\"The source file '/VIDEO_TS/VTS_05_1.VOB' is corrupt or invalid at offset 8192, "
+        "attempting to work around\",\"The source file '%1' is corrupt or invalid at offset %2, "
+        "attempting to work around\",\"/VIDEO_TS/VTS_05_1.VOB\",\"8192\""
+    )
+    parser = RipLineParser()
+    logged = [line for _ in range(31) for line in parser.feed(warning)]
+
+    assert parser.read_errors == 0
+    assert parser.source_warnings == 31
+    assert logged == ["[warn] /VIDEO_TS/VTS_05_1.VOB has invalid structure — MakeMKV is working around it"]
+    assert parser.warning_summary() == [
+        "31 structure warning(s) in /VIDEO_TS/VTS_05_1.VOB, worked around by MakeMKV"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_structure_warnings_reach_the_manifest_as_a_note_only(make_job):
+    job_id = make_job(status="queued", title="Protected Disc", year=2009, mkv_title_indices=[0])
+    warning = (
+        "MSG:4004,16777216,2,\"The source file '/VIDEO_TS/VTS_05_1.VOB' is corrupt or invalid at offset 8192, "
+        "attempting to work around\",\"x\",\"/VIDEO_TS/VTS_05_1.VOB\",\"8192\""
+    )
+    await _rip_and_deliver(job_id, {0: {"files": ["t00.mkv"], "lines": [warning] * 31}})
+
+    row = _titles(job_id)[0]
+    assert row.read_errors == 0
+    assert "31 structure warning(s) in /VIDEO_TS/VTS_05_1.VOB, worked around by MakeMKV" in row.messages
 
 
 # ── Rip loop ────────────────────────────────────────────────────────────────
@@ -203,8 +239,8 @@ async def test_rip_records_size_checksum_and_read_errors(make_job):
     job_id = make_job(status="queued", title="Checked Movie", year=2012, mkv_title_indices=[0])
     lines = [
         'DRV:0,2,999,1,"BD-RE HL-DT-ST","SOME_DISC","/dev/sr0"',
-        "MSG:4004,0,2,\"Error 'x' occurred while reading '/VIDEO_TS/VTS_01_1.VOB' at offset '1'\"",
-        "MSG:4004,0,2,\"Error 'x' occurred while reading '/VIDEO_TS/VTS_01_1.VOB' at offset '2'\"",
+        "MSG:2003,0,3,\"Error 'x' occurred while reading '/VIDEO_TS/VTS_01_1.VOB' at offset '1'\"",
+        "MSG:2003,0,3,\"Error 'x' occurred while reading '/VIDEO_TS/VTS_01_1.VOB' at offset '2'\"",
         'MSG:5036,0,1,"Copy complete. 1 titles saved.","Copy complete."',
     ]
     await _rip_and_deliver(job_id, {0: {"files": ["title_t00.mkv"], "lines": lines}})

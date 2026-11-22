@@ -174,7 +174,10 @@ class RipLineParser:
 
     def __init__(self):
         self.fraction: Optional[float] = None
+        # Failures to read the disc (damage, dirt). These matter.
         self.read_errors = 0
+        # Structure notes MakeMKV works around. Routine on protected DVDs.
+        self.source_warnings = 0
         self.drive_label: Optional[str] = None
         self.messages: list[str] = []
         # "Title #N was added (...)" lines: the disc structure as MakeMKV
@@ -182,6 +185,13 @@ class RipLineParser:
         self.added_titles: list[str] = []
         self._last_prgc = ""
         self._warn_files: dict[str, int] = {}
+
+    def warning_summary(self) -> list[str]:
+        """One line per source file MakeMKV had to work around."""
+        return [
+            f"{count} structure warning(s) in {fname}, worked around by MakeMKV"
+            for fname, count in self._warn_files.items()
+        ]
 
     def _remember(self, text: str) -> None:
         if text and len(self.messages) < _MAX_TITLE_MESSAGES:
@@ -225,16 +235,30 @@ class RipLineParser:
                 return [f"[rip] {msg}"]
             return []
 
+        # MSG:4004 "The source file X is corrupt or invalid at offset N,
+        # attempting to work around" is a note about the disc's structure.
+        # Discs with structural copy protection produce the same dozens of
+        # them on every pass of a title that rips perfectly, so they are
+        # counted apart from read errors and summarised once per file.
         if line.startswith("MSG:4004,"):
-            self.read_errors += 1
+            self.source_warnings += 1
             m = re.search(r"'([^']+)'", line)
             fname = m.group(1) if m else "unknown"
             self._warn_files[fname] = self._warn_files.get(fname, 0) + 1
             if self._warn_files[fname] == 1:
-                self._remember(f"Corrupt sector in {fname}")
-                return [f"[warn] Corrupt sector in {fname} — attempting workaround"]
-            if self._warn_files[fname] == 5:
-                return [f"[warn] Multiple corrupt sectors in {fname} (suppressing further warnings)"]
+                return [f"[warn] {fname} has invalid structure — MakeMKV is working around it"]
+            return []
+
+        # A real failure to read the disc: MSG:2003 "Error '<scsi error>'
+        # occurred while reading '<file>' at offset '<n>'".
+        if line.startswith("MSG:2003,") or (line.startswith("MSG:") and "occurred while reading" in line):
+            self.read_errors += 1
+            text = _extract_msg_text(line)
+            if self.read_errors <= 3:
+                self._remember(text)
+                return [f"[warn] Read error: {text}"]
+            if self.read_errors == 4:
+                return ["[warn] More read errors (suppressing further warnings; the count is kept)"]
             return []
 
         if line.startswith(self._SUMMARY):
@@ -563,7 +587,7 @@ class JobManager:
                 await log(f"[rip] {produced.name} → {canonical.name}")
 
                 info = await asyncio.to_thread(probe_service.inspect_file, str(canonical))
-                messages = list(parser.messages)
+                messages = list(parser.messages) + parser.warning_summary()
                 probe = info.get("probe") or {}
                 scanned = scan_durations.get(idx) or 0
                 measured = probe.get("duration_seconds") or 0
