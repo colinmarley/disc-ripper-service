@@ -21,6 +21,20 @@ class Settings(BaseSettings):
     # Disc device
     disc_device: str = Field(default="disc:0", validation_alias="DISC_DEVICE")
 
+    # Seconds to wait for `makemkvcon info` (Blu-ray scans can take minutes)
+    scan_timeout_seconds: int = Field(default=300, validation_alias="SCAN_TIMEOUT_SECONDS")
+
+    # Compute a sha256 of every ripped file before delivery (adds roughly a
+    # minute per 30 GB title on NVMe).
+    hash_ripped_files: bool = Field(default=True, validation_alias="HASH_RIPPED_FILES")
+
+    # Fail a job whose scan was explicitly chosen if the drive turns out to
+    # hold a different disc. Turn off if it ever rejects the right disc.
+    verify_disc_matches_scan: bool = Field(default=True, validation_alias="VERIFY_DISC_MATCHES_SCAN")
+
+    # Recorded in the rip manifest so the library knows which machine ripped.
+    host_id: str = Field(default="disc-ripper", validation_alias="HOST_ID")
+
     # Log file storage
     logs_root: str = Field(default="/data/ripper/logs", validation_alias="LOGS_ROOT")
 
