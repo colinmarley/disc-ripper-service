@@ -133,6 +133,20 @@ DURATION_TOLERANCE = 0.02
 _MAX_TITLE_MESSAGES = 50
 
 
+def _names_in(folder: Path) -> set[str]:
+    """Lower-cased names of what is in ``folder`` now, from its listing.
+
+    The listing, not ``Path.exists``: on the CIFS share the ingest folder lives
+    on, a file another machine moved away keeps answering "exists" from the
+    client's cache for hours, while the listing no longer has it. Every extra
+    of a later disc was then delivered as "... - Copy 2-clip.mkv".
+    """
+    try:
+        return {entry.lower() for entry in os.listdir(folder)}
+    except OSError:
+        return set()
+
+
 def _unique_dest_name(dest_dir: Path, name: str, taken: set[str]) -> str:
     """Return `name`, or a ' - Copy N' variant if it is already used.
 
@@ -141,8 +155,10 @@ def _unique_dest_name(dest_dir: Path, name: str, taken: set[str]) -> str:
     extras suffix has to stay at the very end of the stem, so the marker
     goes in front of it.
     """
+    on_disk = _names_in(dest_dir)
+
     def used(candidate: str) -> bool:
-        return candidate.lower() in taken or (dest_dir / candidate).exists()
+        return candidate.lower() in taken or candidate.lower() in on_disk
 
     if not used(name):
         return name

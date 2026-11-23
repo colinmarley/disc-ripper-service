@@ -340,6 +340,16 @@ def test_unique_dest_name(tmp_path):
     ) == "Movie (2020) - Copy 2-trailer.mkv"
 
 
+def test_unique_dest_name_goes_by_the_folder_listing(tmp_path, monkeypatch):
+    """On the network share a file moved away by another machine still answers
+    "exists" for hours; the listing is right. Nothing is listed: the name is free."""
+    from pathlib import Path
+    monkeypatch.setattr(Path, "exists", lambda self: True)
+    assert _unique_dest_name(tmp_path, "Show (1996)-clip.mkv", set()) == "Show (1996)-clip.mkv"
+    # A folder that is not there yet has nothing in it.
+    assert _unique_dest_name(tmp_path / "Season 06", "Show (1996)-clip.mkv", set()) == "Show (1996)-clip.mkv"
+
+
 @pytest.mark.asyncio
 async def test_delivery_never_overwrites_an_existing_file(make_job):
     """A second disc (or a re-rip) of the same film lands in the same folder
