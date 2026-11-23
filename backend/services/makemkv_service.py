@@ -347,6 +347,25 @@ def fingerprint(parsed: dict) -> Optional[str]:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def minlength_args(min_length: Optional[int]) -> list[str]:
+    """The makemkvcon option for a chosen minimum title length, if any.
+
+    MakeMKV leaves out titles shorter than its minimum (120 seconds unless
+    its settings say otherwise) and numbers the titles it keeps, so a rip
+    must use the same minimum as the scan its title indices came from.
+    """
+    if min_length is None:
+        return []
+    return [f"--minlength={max(0, int(min_length))}"]
+
+
+def scan_min_length(parsed: Optional[dict]) -> Optional[int]:
+    """The minimum title length a stored scan was made with; None when it
+    used MakeMKV's own setting (every scan before the option existed)."""
+    value = (parsed or {}).get("min_length_seconds")
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
 def makemkvcon_available() -> bool:
     return shutil.which(settings.makemkvcon_path) is not None
 
@@ -398,15 +417,21 @@ def scan_summary(scan) -> dict:
     }
 
 
-async def scan_disc() -> dict[str, Any]:
-    """Scan the disc, persist the full result, and return disc + title info."""
+async def scan_disc(min_length: Optional[int] = None) -> dict[str, Any]:
+    """Scan the disc, persist the full result, and return disc + title info.
+
+    `min_length` (seconds) replaces MakeMKV's own minimum title length for
+    this scan; 0 lists every title. It is stored with the scan so that a job
+    started from it rips with the same title numbering.
+    """
     if not makemkvcon_available():
         return {"error": "makemkvcon not found — install makemkv-bin", "titles": []}
 
     timeout = settings.scan_timeout_seconds
     try:
         proc = await asyncio.create_subprocess_exec(
-            settings.makemkvcon_path, "-r", "--noscan", "info", settings.disc_device,
+            settings.makemkvcon_path, "-r", "--noscan", *minlength_args(min_length),
+            "info", settings.disc_device,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -423,6 +448,7 @@ async def scan_disc() -> dict[str, Any]:
         return {"error": err_output.strip() or "Disc scan failed", "titles": []}
 
     parsed = parse_scan(output)
+    parsed["min_length_seconds"] = min_length
     titles = parsed["titles"]
     if not titles:
         # Surface the raw makemkvcon output to help diagnose the cause
@@ -442,5 +468,11 @@ async def scan_disc() -> dict[str, Any]:
         "titles": titles,
         "error": None,
         "scan_id": summary["scan_id"],
-        "disc": {**summary, "skipped_short": parsed["skipped_short"], "skipped_other": parsed["skipped_other"]},
+        "disc": {
+            **summary,
+            "skipped_short": parsed["skipped_short"],
+            "skipped_other": parsed["skipped_other"],
+            # Always present, so a caller can tell this build knows the option.
+            "min_length_seconds": min_length,
+        },
     }

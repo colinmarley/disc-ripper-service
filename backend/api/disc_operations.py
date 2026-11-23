@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
 from db.database import SessionLocal
@@ -9,14 +11,22 @@ router = APIRouter(prefix="/disc", tags=["Disc"])
 
 
 @router.get("/info")
-async def get_disc_info():
+async def get_disc_info(
+    min_length: Optional[int] = Query(
+        default=None, ge=0, le=7200,
+        description="Minimum title length in seconds for this scan (0 lists every title). "
+                    "Omit it to use MakeMKV's own setting, which skips short titles.",
+    ),
+):
     """Scan the disc drive, store the full scan, and return disc identity plus
     the title list (durations, chapters, source playlist, every stream).
 
     `scan_id` identifies the stored scan; send it back in `POST /jobs/start`
-    so the job is tied to exactly this disc.
+    so the job is tied to exactly this disc. A scan made with `min_length`
+    numbers its titles differently from an ordinary one, so a job that uses
+    its title indices has to name it.
     """
-    return await scan_disc()
+    return await scan_disc(min_length=min_length)
 
 
 @router.get("/status")
