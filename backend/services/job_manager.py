@@ -479,6 +479,13 @@ class JobManager:
             t.get("index"): t.get("duration_seconds", 0)
             for t in ((duration_scan.parsed or {}).get("titles") or [])
         } if duration_scan is not None else {}
+        # The job's title indices are the scan's: rip with the minimum title
+        # length the scan was made with, or MakeMKV numbers the titles differently.
+        minlength = makemkv_service.minlength_args(
+            makemkv_service.scan_min_length(duration_scan.parsed) if duration_scan is not None else None
+        )
+        if minlength:
+            await log(f"[rip] Scan included short titles: ripping with {minlength[0]}")
 
         total = len(job.mkv_title_indices)
         ripped_count = 0
@@ -493,7 +500,7 @@ class JobManager:
             started_at = datetime.utcnow()
             proc = await asyncio.create_subprocess_exec(
                 settings.makemkvcon_path,
-                "--noscan", "-r",
+                "--noscan", "-r", *minlength,
                 "mkv", settings.disc_device,
                 str(idx),
                 rip_dir,

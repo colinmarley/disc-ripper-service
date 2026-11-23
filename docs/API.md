@@ -8,7 +8,7 @@ caller (my-media-manager's disc-ripper admin page).
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/disc/info` | Scan the disc drive via `makemkvcon`, **store the full scan**, and return `scan_id`, a `disc` block (label, volume name, reported disc type, drive, MakeMKV version, fingerprint) and the title list (duration, chapters, source playlist, segment map, every stream with language/channels/flags) |
+| GET | `/disc/info` | Scan the disc drive via `makemkvcon`, **store the full scan**, and return `scan_id`, a `disc` block (label, volume name, reported disc type, drive, MakeMKV version, fingerprint) and the title list (duration, chapters, source playlist, segment map, every stream with language/channels/flags). Optional `?min_length=<seconds>` scans with that minimum title length instead of MakeMKV's own setting (`0` lists every title, including the short ones a normal scan skips); `disc.min_length_seconds` echoes it (null for a normal scan), and a job started with that `scan_id` rips with the same minimum so its title indices match |
 | GET | `/disc/status` | `{"makemkvcon_available": bool}` |
 | GET | `/disc/scans` | Recent stored scans, newest first. `?fingerprint=` finds earlier scans of the same disc |
 | GET | `/disc/scans/{scan_id}` | A stored scan: summary plus everything parsed from it |
