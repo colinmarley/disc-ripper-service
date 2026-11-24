@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     # minute per 30 GB title on NVMe).
     hash_ripped_files: bool = Field(default=True, validation_alias="HASH_RIPPED_FILES")
 
+    # Crop bars burned into a 4:3 SD frame (a non-anamorphic widescreen DVD) by
+    # re-encoding just those titles; every other title keeps the disc's video.
+    crop_letterboxed_dvds: bool = Field(default=True, validation_alias="CROP_LETTERBOXED_DVDS")
+    letterbox_crf: int = Field(default=18, validation_alias="LETTERBOX_CRF")
+    letterbox_preset: str = Field(default="slow", validation_alias="LETTERBOX_PRESET")
+    letterbox_timeout_seconds: int = Field(default=3 * 3600, validation_alias="LETTERBOX_TIMEOUT_SECONDS")
+
     # Fail a job whose scan was explicitly chosen if the drive turns out to
     # hold a different disc. Turn off if it ever rejects the right disc.
     verify_disc_matches_scan: bool = Field(default=True, validation_alias="VERIFY_DISC_MATCHES_SCAN")
