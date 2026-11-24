@@ -412,6 +412,43 @@ async def test_delivery_never_overwrites_an_existing_file(make_job):
 
 
 @pytest.mark.asyncio
+async def test_a_letterboxed_title_is_cropped_before_its_size_and_hash_are_recorded(make_job):
+    """The rip record must describe the file that is delivered: the library holds a
+    ripped extra by its exact recorded size."""
+    from services.letterbox_service import Crop
+
+    job_id = make_job(status="queued", title="Boxed In", year=2007, mkv_title_indices=[0])
+
+    def _crop(path, crop, interlaced, expected):
+        Path(path).write_bytes(b"cropped-and-smaller")
+        return None
+
+    with patch("services.job_manager.letterbox_service.detect", return_value=Crop(710, 364, 6, 58)), \
+         patch("services.job_manager.letterbox_service.crop_in_place", side_effect=_crop):
+        await _rip_and_deliver(job_id, {0: {"files": ["boxed.mkv"]}})
+
+    delivered = Path(_job(job_id).output_paths[0])
+    assert delivered.read_bytes() == b"cropped-and-smaller"
+    title = _titles(job_id)[0]
+    assert title.size_bytes == len(b"cropped-and-smaller")
+    assert any(m.startswith("Cropped bars burned into the picture") for m in title.messages)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_crop_keeps_the_title_as_ripped(make_job):
+    from services.letterbox_service import Crop
+
+    job_id = make_job(status="queued", title="Kept As Ripped", year=2007, mkv_title_indices=[0])
+    with patch("services.job_manager.letterbox_service.detect", return_value=Crop(710, 364, 6, 58)), \
+         patch("services.job_manager.letterbox_service.crop_in_place", return_value="ffmpeg exited 1"):
+        await _rip_and_deliver(job_id, {0: {"files": ["kept.mkv"]}})
+
+    assert _job(job_id).status != "failed"
+    assert b"mkv-data-title-0" in Path(_job(job_id).output_paths[0]).read_bytes()
+    assert any("Letterbox crop failed" in m for m in _titles(job_id)[0].messages)
+
+
+@pytest.mark.asyncio
 async def test_movie_with_extra_keeps_plain_main_feature_name(make_job):
     """One feature plus a trailer is not 'Version 1': extras do not count
     towards the multi-version naming."""

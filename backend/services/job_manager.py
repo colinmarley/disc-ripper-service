@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from config.settings import settings
 from db.database import SessionLocal
 from db.models import DiscScan, RipJob, RipTitle
-from services import catalog_client, makemkv_service, probe_service
+from services import catalog_client, letterbox_service, makemkv_service, probe_service
 from services import manifest as manifest_service
 from homelab_logging import setup_logging, get_logger
 from homelab_logging.config import LoggingConfig
@@ -630,6 +630,11 @@ class JobManager:
 
                 info = await asyncio.to_thread(probe_service.inspect_file, str(canonical))
                 messages = list(parser.messages) + parser.warning_summary()
+                crop_note = await self._crop_letterbox(canonical, info.get("probe"), log)
+                if crop_note:
+                    messages.append(crop_note)
+                    # Size, hash and streams are those of the file that is delivered.
+                    info = await asyncio.to_thread(probe_service.inspect_file, str(canonical))
                 probe = info.get("probe") or {}
                 scanned = scan_durations.get(idx) or 0
                 measured = probe.get("duration_seconds") or 0
@@ -691,6 +696,29 @@ class JobManager:
             taken.add(name.lower())
             planned[row.id] = dest_dir / name
         return planned
+
+    async def _crop_letterbox(self, path: Path, probe: Optional[dict], log) -> Optional[str]:
+        """Crop bars burned into a letterboxed 4:3 DVD title, in place. Returns the
+        note for the title's messages when it was cropped, else None."""
+        if not settings.crop_letterboxed_dvds:
+            return None
+        crop = await asyncio.to_thread(letterbox_service.detect, str(path), probe)
+        if crop is None:
+            return None
+        video = next((s for s in (probe or {}).get("streams") or [] if s.get("codec_type") == "video"), {})
+        width, height = int(video.get("width") or 0), int(video.get("height") or 0)
+        interlaced = letterbox_service.is_interlaced(probe)
+        await log(f"[crop] {path.name}: bars burned into the picture; re-encoding to "
+                  f"{crop.width}x{crop.height}{' (deinterlaced)' if interlaced else ''}")
+        refused = await asyncio.to_thread(
+            letterbox_service.crop_in_place, str(path), crop, interlaced,
+            (probe or {}).get("duration_seconds") or 0,
+        )
+        if refused:
+            await log(f"[warn] {path.name}: kept as ripped, the crop failed ({refused})")
+            return f"Letterbox crop failed, kept as ripped: {refused}"
+        await log(f"[crop] {path.name} done")
+        return letterbox_service.describe(crop, width, height, interlaced)
 
     async def _run_deliver(self, job_id: str, log):
         job = self._set_status(job_id, "delivering")
