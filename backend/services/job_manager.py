@@ -147,6 +147,25 @@ def _names_in(folder: Path) -> set[str]:
         return set()
 
 
+def _deliver_file(src: Path, dest: Path) -> None:
+    """Move ``src`` to ``dest`` under a fresh temporary name, then rename it.
+
+    On the CIFS share, a name another machine moved away can stay in the
+    client's cache: it answers "exists" and opening it for writing fails with
+    EINVAL, while a rename onto it works and clears the stale entry. Writing
+    to a name no one has used, then renaming, also means the watcher never
+    sees a half-copied ``.mkv``.
+    """
+    tmp = dest.with_name(f".{dest.stem}.{uuid4().hex[:8]}.partial")
+    shutil.move(str(src), str(tmp))
+    try:
+        os.replace(tmp, dest)
+    except OSError:
+        # Put the file back so a retry still has it.
+        shutil.move(str(tmp), str(src))
+        raise
+
+
 def _unique_dest_name(dest_dir: Path, name: str, taken: set[str]) -> str:
     """Return `name`, or a ' - Copy N' variant if it is already used.
 
@@ -719,7 +738,7 @@ class JobManager:
         for row in ripped:
             src_path, dest_file = Path(row.rip_path), planned[row.id]
             await log(f"[deliver] Moving {src_path.name} → {dest_file.name}")
-            shutil.move(str(src_path), str(dest_file))
+            _deliver_file(src_path, dest_file)
             self._update_rip_title(row.id, status="delivered")
             delivered.append(str(dest_file))
 

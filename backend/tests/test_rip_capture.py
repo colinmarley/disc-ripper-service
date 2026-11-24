@@ -350,6 +350,51 @@ def test_unique_dest_name_goes_by_the_folder_listing(tmp_path, monkeypatch):
     assert _unique_dest_name(tmp_path / "Season 06", "Show (1996)-clip.mkv", set()) == "Show (1996)-clip.mkv"
 
 
+def test_deliver_file_never_writes_to_the_final_name(tmp_path, monkeypatch):
+    """On the share, a name another machine moved away can fail with EINVAL
+    when opened for writing; a rename onto it works. Delivery writes to a
+    fresh temporary name and renames it into place."""
+    import errno
+    import shutil
+    from services.job_manager import _deliver_file
+
+    src = tmp_path / "rip" / "rip_0005.mkv"
+    src.parent.mkdir()
+    src.write_bytes(b"clip")
+    dest = tmp_path / "Season 06" / "Show (1996)-clip.mkv"
+    dest.parent.mkdir()
+    real_move = shutil.move
+
+    def _move(s, d):
+        if Path(d) == dest:
+            raise OSError(errno.EINVAL, "Invalid argument", str(d))
+        return real_move(s, d)
+
+    monkeypatch.setattr("services.job_manager.shutil.move", _move)
+    _deliver_file(src, dest)
+    assert dest.read_bytes() == b"clip"
+    assert not src.exists()
+    assert sorted(p.name for p in dest.parent.iterdir()) == ["Show (1996)-clip.mkv"]
+
+
+def test_deliver_file_puts_the_file_back_when_the_rename_fails(tmp_path, monkeypatch):
+    from services.job_manager import _deliver_file
+
+    src = tmp_path / "rip_0005.mkv"
+    src.write_bytes(b"clip")
+    dest = tmp_path / "out" / "Show (1996)-clip.mkv"
+    dest.parent.mkdir()
+
+    def _replace(a, b):
+        raise OSError("rename refused")
+
+    monkeypatch.setattr("services.job_manager.os.replace", _replace)
+    with pytest.raises(OSError):
+        _deliver_file(src, dest)
+    assert src.read_bytes() == b"clip"
+    assert list(dest.parent.iterdir()) == []
+
+
 @pytest.mark.asyncio
 async def test_delivery_never_overwrites_an_existing_file(make_job):
     """A second disc (or a re-rip) of the same film lands in the same folder
