@@ -3,6 +3,9 @@ services:
     build: .
     container_name: disc-ripper
     restart: unless-stopped
+    # A small init as PID 1 reaps exited processes. The app (PID 1 otherwise) does not, and
+    # every makemkvcon run leaves its mmgplsrv/mmccextr helpers behind as zombies.
+    init: true
     labels:
       logging: "promtail"
       logging_project: "disc-ripper-service"

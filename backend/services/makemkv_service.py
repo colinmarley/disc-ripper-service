@@ -417,6 +417,27 @@ def scan_summary(scan) -> dict:
     }
 
 
+_scan_lock = asyncio.Lock()
+# How long makemkvcon gets to exit after SIGTERM before it is killed.
+STOP_GRACE_SECONDS = 10
+
+
+async def _stop_process(proc: asyncio.subprocess.Process) -> None:
+    """Stop ``proc`` and wait for it to exit, so it lets go of the drive."""
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=STOP_GRACE_SECONDS)
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            return
+        await proc.wait()
+
+
 async def scan_disc(min_length: Optional[int] = None) -> dict[str, Any]:
     """Scan the disc, persist the full result, and return disc + title info.
 
@@ -428,18 +449,33 @@ async def scan_disc(min_length: Optional[int] = None) -> dict[str, Any]:
         return {"error": "makemkvcon not found — install makemkv-bin", "titles": []}
 
     timeout = settings.scan_timeout_seconds
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            settings.makemkvcon_path, "-r", "--noscan", *minlength_args(min_length),
-            "info", settings.disc_device,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
-        return {"error": f"Disc scan timed out after {timeout}s", "titles": []}
-    except FileNotFoundError:
-        return {"error": "makemkvcon not found", "titles": []}
+    # One scan at a time: a second makemkvcon on the same drive only queues behind
+    # the first, and a retry while a scan is stuck would pile up another.
+    async with _scan_lock:
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                settings.makemkvcon_path, "-r", "--noscan", *minlength_args(min_length),
+                "info", settings.disc_device,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return {
+                "error": (
+                    f"Disc scan timed out after {timeout}s. MakeMKV was stopped, so the drive is free "
+                    "again. A scratched or dirty disc is the usual cause: clean it and scan again."
+                ),
+                "titles": [],
+            }
+        except FileNotFoundError:
+            return {"error": "makemkvcon not found", "titles": []}
+        finally:
+            # A scan that did not finish (timed out, or the request was cancelled) must not
+            # leave makemkvcon running: it keeps the drive, and every later scan waits on it.
+            if proc is not None and proc.returncode is None:
+                await _stop_process(proc)
 
     output = stdout.decode(errors="replace")
     err_output = stderr.decode(errors="replace")
